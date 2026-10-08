@@ -19,6 +19,7 @@
 
 #include "DoublePendulumModule.hpp"
 #include "KeplerModule.hpp"
+#include "NBodyModule.hpp"
 #include "OscillatorModule.hpp"
 #include "PendulumModule.hpp"
 #include "ProjectileModule.hpp"
@@ -316,6 +317,7 @@ int App::run(const AppOptions& options) {
     modules_.push_back(std::make_unique<PendulumModule>());
     modules_.push_back(std::make_unique<DoublePendulumModule>());
     modules_.push_back(std::make_unique<KeplerModule>());
+    modules_.push_back(std::make_unique<NBodyModule>());
     activate(std::clamp(options.simulation - 1, 0, static_cast<int>(modules_.size()) - 1));
 
     using Clock = std::chrono::steady_clock;
