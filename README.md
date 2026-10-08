@@ -33,6 +33,7 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
+./build/physicslab --level 5                 # démarre au niveau pédagogique 5 (1 à 6)
 ```
 
 Si le dépôt a été cloné sans `--recurse-submodules` : `git submodule update --init --recursive`.
@@ -56,7 +57,7 @@ Ordre de progression (cocher au fil des modules) :
 
 - [ ] Mécanique
   - [x] M0 : socle (CMake, fenêtre, ImGui docking, maths, interface Solver, sélecteur de niveau)
-  - [ ] M1 : chute libre et projectile, comparaison Euler / Verlet / RK4 / RK45
+  - [x] M1 : projectile avec frottement, comparaison Euler / Euler symplectique / Verlet / RK4 / RK45
   - [ ] M2 : ressort-masse (libre, amorti, forcé)
   - [ ] M3 : pendule simple puis double
   - [ ] M4 : gravitation, Kepler, N-corps

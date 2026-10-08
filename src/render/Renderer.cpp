@@ -107,6 +107,7 @@ void Renderer::beginFrame(int fbW, int fbH, const ViewRect& view, const Camera& 
     glScissor(view.x, glY, view.w, view.h);
 
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);  // à profondeur égale, le dernier dessin gagne (courbes superposées)
     glEnable(GL_PROGRAM_POINT_SIZE);
 
     float viewProj[16];
