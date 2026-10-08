@@ -30,13 +30,15 @@ endfunction()
 # --- Cœur physique : maths, constantes, solveurs, monde (aucune dépendance graphique) ---
 add_library(physicslab_core STATIC
     src/core/Solver.cpp
+    src/core/Events.cpp
     src/core/World.cpp
     src/mechanics/Projectile.cpp
     src/mechanics/Oscillator.cpp
     src/mechanics/Pendulum.cpp
     src/mechanics/DoublePendulum.cpp
     src/mechanics/Kepler.cpp
-    src/mechanics/NBody.cpp)
+    src/mechanics/NBody.cpp
+    src/mechanics/Friction.cpp)
 target_include_directories(physicslab_core PUBLIC include)
 physicslab_warnings(physicslab_core)
 
@@ -58,7 +60,8 @@ add_executable(physicslab
     src/app/PendulumModule.cpp
     src/app/DoublePendulumModule.cpp
     src/app/KeplerModule.cpp
-    src/app/NBodyModule.cpp)
+    src/app/NBodyModule.cpp
+    src/app/FrictionModule.cpp)
 target_link_libraries(physicslab PRIVATE physicslab_core physicslab_render glfw imgui implot)
 target_compile_definitions(physicslab PRIVATE
     PHYSICSLAB_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")

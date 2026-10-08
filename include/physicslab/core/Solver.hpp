@@ -97,7 +97,10 @@ private:
 };
 
 // Avance y de t à t + dt en enchaînant les pas du solveur (plusieurs si le solveur est adaptatif).
-// Renvoie la durée réellement avancée, égale à dt sauf défaillance du solveur.
-double advance(Solver& solver, const OdeFunction& f, double t, State& y, double dt);
+// Renvoie la durée réellement avancée, égale à dt sauf défaillance du solveur ou budget épuisé.
+// maxSteps > 0 : au plus maxSteps appels du solveur. Un solveur adaptatif peut en effet réduire son pas indéfiniment sur une
+// dynamique discontinue (« glissement » du frottement sec : l'erreur locale reste d'ordre h, quelle que soit h) ; le budget
+// rend la main à l'appelant, qui décide (arrêter, signaler le blocage...). 0 = sans limite.
+double advance(Solver& solver, const OdeFunction& f, double t, State& y, double dt, int maxSteps = 0);
 
 }  // namespace pl

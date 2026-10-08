@@ -23,6 +23,9 @@ inline ImVec4 toImVec4(const float c[3], float alpha = 1.0f) { return ImVec4(c[0
 // Texte formaté à la printf.
 std::string strf(const char* format, ...);
 
+// Texte qui passe à la ligne dans le panneau (grisé pour les notes).
+void wrapped(const std::string& text, bool dim = false);
+
 // Style de courbe ImPlot : couleur, épaisseur 2, décalage du tampon circulaire.
 inline ImPlotSpec lineSpec(const float c[3], int offset = 0) {
     return ImPlotSpec(ImPlotProp_LineColor, toImVec4(c), ImPlotProp_LineWeight, 2.0f, ImPlotProp_Offset, offset);

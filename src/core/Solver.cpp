@@ -128,12 +128,15 @@ double RK45::step(const OdeFunction& f, double t, State& y, double dt) {
     }
 }
 
-double advance(Solver& solver, const OdeFunction& f, double t, State& y, double dt) {
+double advance(Solver& solver, const OdeFunction& f, double t, State& y, double dt, int maxSteps) {
     double elapsed = 0.0;
+    int steps = 0;
     while (dt - elapsed > 1e-12 * dt) {
+        if (maxSteps > 0 && steps >= maxSteps) break;  // budget épuisé : on rend la main, elapsed < dt
         const double h = solver.step(f, t + elapsed, y, dt - elapsed);
         if (!(h > 0.0)) break;  // garde-fou : un solveur défaillant ne doit pas boucler
         elapsed += h;
+        ++steps;
     }
     return elapsed;
 }
