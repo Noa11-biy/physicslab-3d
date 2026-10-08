@@ -31,7 +31,8 @@ endfunction()
 add_library(physicslab_core STATIC
     src/core/Solver.cpp
     src/core/World.cpp
-    src/mechanics/Projectile.cpp)
+    src/mechanics/Projectile.cpp
+    src/mechanics/Oscillator.cpp)
 target_include_directories(physicslab_core PUBLIC include)
 physicslab_warnings(physicslab_core)
 
@@ -46,7 +47,10 @@ physicslab_warnings(physicslab_render)
 # --- Application ---
 add_executable(physicslab
     src/app/main.cpp
-    src/app/Application.cpp)
+    src/app/Application.cpp
+    src/app/UiCommon.cpp
+    src/app/ProjectileModule.cpp
+    src/app/OscillatorModule.cpp)
 target_link_libraries(physicslab PRIVATE physicslab_core physicslab_render glfw imgui implot)
 target_compile_definitions(physicslab PRIVATE
     PHYSICSLAB_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")

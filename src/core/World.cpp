@@ -33,13 +33,7 @@ double World::step(Solver& solver, double dt) {
         }
     };
 
-    // Un solveur adaptatif peut avancer de moins que demandé : on recommence jusqu'à couvrir dt.
-    double elapsed = 0.0;
-    while (dt - elapsed > 1e-12 * dt) {
-        const double advanced = solver.step(f, time + elapsed, state_, dt - elapsed);
-        if (!(advanced > 0.0)) break;  // garde-fou : un solveur défaillant ne doit pas boucler
-        elapsed += advanced;
-    }
+    const double elapsed = advance(solver, f, time, state_, dt);
 
     for (std::size_t i = 0; i < n; ++i) {
         Particle& p = particles[i];
