@@ -30,7 +30,8 @@ endfunction()
 # --- Cœur physique : maths, constantes, solveurs, monde (aucune dépendance graphique) ---
 add_library(physicslab_core STATIC
     src/core/Solver.cpp
-    src/core/World.cpp)
+    src/core/World.cpp
+    src/mechanics/Projectile.cpp)
 target_include_directories(physicslab_core PUBLIC include)
 physicslab_warnings(physicslab_core)
 
