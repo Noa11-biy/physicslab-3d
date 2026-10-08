@@ -268,60 +268,33 @@ void ProjectileModule::drawInvariants(const UiContext& ctx) {
     const bool researcher = atLeast(level, Level::Chercheur);
 
     // Chercheur : dE et dE/E0 remplacent Em (redondant) pour que le tableau tienne dans le panneau.
-    const bool showEm = !researcher, showDE = lycee, showRel = researcher;
-    const int columns = 2 + (showEm ? 1 : 0) + (showDE ? 1 : 0) + (showRel ? 1 : 0);
-    if (ImGui::BeginTable("erreurs", columns, ImGuiTableFlags_RowBg)) {
-        // Colonnes numériques à largeur fixe (le plus long nombre affiché) ; "Méthode" prend le reste.
-        const float numW = ImGui::CalcTextSize("+0.0e+00").x + 2.0f * ImGui::GetStyle().CellPadding.x;
-        ImGui::TableSetupColumn("Méthode", ImGuiTableColumnFlags_WidthStretch);
-        if (showEm) ImGui::TableSetupColumn("Em (J)", ImGuiTableColumnFlags_WidthFixed, numW);
-        if (showDE) ImGui::TableSetupColumn("dE (J)", ImGuiTableColumnFlags_WidthFixed, numW);
-        if (showRel) ImGui::TableSetupColumn("dE/E0", ImGuiTableColumnFlags_WidthFixed, numW);
-        ImGui::TableSetupColumn("dr (m)", ImGuiTableColumnFlags_WidthFixed, numW);
-        ImGui::TableHeadersRow();
+    std::vector<std::string> headers;
+    if (!researcher) headers.push_back("Em (J)");
+    if (lycee) headers.push_back("dE (J)");
+    if (researcher) headers.push_back("dE/E0");
+    headers.push_back("dr (m)");
 
-        auto dash = [] {
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("-");
-        };
-
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextColored(toImVec4(kBlue), "Exacte");
-        if (showEm) {
-            ImGui::TableNextColumn();
-            ImGui::Text("%.3f", exactEnergy);
-        }
-        if (showDE) dash();
-        if (showRel) dash();
-        dash();
-
-        for (int i = 0; i < SolverSet::kCount; ++i) {
-            if (!solvers_.isShown(level, i)) continue;
-            const Run& r = runs_[i];
-            const double energy = r.world.invariants().total();
-            const double posErr = (r.world.particles[0].position - exactPos).norm();
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(toImVec4(solvers_.color(i)), "%s", solvers_.shortLabel(level, i).c_str());
-            if (showEm) {
-                ImGui::TableNextColumn();
-                ImGui::Text("%.3f", energy);
-            }
-            if (showDE) {
-                ImGui::TableNextColumn();
-                ImGui::Text("%+.1e", energy - exactEnergy);
-            }
-            if (showRel) {
-                ImGui::TableNextColumn();
-                ImGui::Text("%+.1e", (energy - exactEnergy) / e0);
-            }
-            ImGui::TableNextColumn();
-            ImGui::Text("%.1e", posErr);
-        }
-        ImGui::EndTable();
+    std::vector<TableRow> rows;
+    {
+        TableRow ref{"Exacte", kBlue, {}};
+        if (!researcher) ref.cells.push_back(strf("%.3f", exactEnergy));
+        if (lycee) ref.cells.push_back("-");
+        if (researcher) ref.cells.push_back("-");
+        ref.cells.push_back("-");
+        rows.push_back(ref);
     }
+    for (int i = 0; i < SolverSet::kCount; ++i) {
+        if (!solvers_.isShown(level, i)) continue;
+        const Run& r = runs_[i];
+        const double energy = r.world.invariants().total();
+        TableRow row{solvers_.shortLabel(level, i), solvers_.color(i), {}};
+        if (!researcher) row.cells.push_back(strf("%.3f", energy));
+        if (lycee) row.cells.push_back(strf("%+.1e", energy - exactEnergy));
+        if (researcher) row.cells.push_back(strf("%+.1e", (energy - exactEnergy) / e0));
+        row.cells.push_back(strf("%.1e", (r.world.particles[0].position - exactPos).norm()));
+        rows.push_back(row);
+    }
+    drawResultTable("erreurs", headers, rows);
 
     if (lycee) {
         const Vec3 v = problem_.velocity(t);

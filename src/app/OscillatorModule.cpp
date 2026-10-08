@@ -371,63 +371,39 @@ void OscillatorModule::drawInvariants(const UiContext& ctx) {
     const bool lycee = atLeast(level, Level::Lycee);
     const bool researcher = atLeast(level, Level::Chercheur);
 
-    const bool showE = !researcher, showDE = lycee, showRel = researcher;
-    const int columns = 2 + (showE ? 1 : 0) + (showDE ? 1 : 0) + (showRel ? 1 : 0);
-    if (ImGui::BeginTable("erreurs", columns, ImGuiTableFlags_RowBg)) {
-        const float numW = ImGui::CalcTextSize("+0.0e+00").x + 2.0f * ImGui::GetStyle().CellPadding.x;
-        ImGui::TableSetupColumn("Méthode", ImGuiTableColumnFlags_WidthStretch);
-        if (showE) ImGui::TableSetupColumn("E (J)", ImGuiTableColumnFlags_WidthFixed, numW);
-        if (showDE) ImGui::TableSetupColumn("dE (J)", ImGuiTableColumnFlags_WidthFixed, numW);
-        if (showRel) ImGui::TableSetupColumn("dE/E0", ImGuiTableColumnFlags_WidthFixed, numW);
-        ImGui::TableSetupColumn("dx (m)", ImGuiTableColumnFlags_WidthFixed, numW);
-        ImGui::TableHeadersRow();
+    // Chercheur : dE et dE/E0 remplacent E (redondant) pour que le tableau tienne dans le panneau.
+    std::vector<std::string> headers;
+    if (!researcher) headers.push_back("E (J)");
+    if (lycee) headers.push_back("dE (J)");
+    if (researcher) headers.push_back("dE/E0");
+    headers.push_back("dx (m)");
 
-        auto dash = [] {
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("-");
-        };
-
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextColored(toImVec4(kBlue), "Exacte");
-        if (showE) {
-            ImGui::TableNextColumn();
-            ImGui::Text("%.3f", exactEnergy);
-        }
-        if (showDE) dash();
-        if (showRel) dash();
-        dash();
-
-        for (int i = 0; i < SolverSet::kCount; ++i) {
-            if (!solvers_.isShown(level, i)) continue;
-            const Run& r = runs_[i];
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(toImVec4(solvers_.color(i)), "%s", solvers_.shortLabel(level, i).c_str());
-            if (r.diverged) {
-                ImGui::TableNextColumn();
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "diverge");
-                for (int c = 2; c < columns; ++c) dash();
-                continue;
-            }
-            const double energy = problem_.energy(r.y[0], r.y[1]);
-            if (showE) {
-                ImGui::TableNextColumn();
-                ImGui::Text("%.3f", energy);
-            }
-            if (showDE) {
-                ImGui::TableNextColumn();
-                ImGui::Text("%+.1e", energy - exactEnergy);
-            }
-            if (showRel) {
-                ImGui::TableNextColumn();
-                ImGui::Text("%+.1e", (energy - exactEnergy) / e0);
-            }
-            ImGui::TableNextColumn();
-            ImGui::Text("%.1e", std::abs(r.y[0] - xe));
-        }
-        ImGui::EndTable();
+    std::vector<TableRow> rows;
+    {
+        TableRow ref{"Exacte", kBlue, {}};
+        if (!researcher) ref.cells.push_back(strf("%.3f", exactEnergy));
+        if (lycee) ref.cells.push_back("-");
+        if (researcher) ref.cells.push_back("-");
+        ref.cells.push_back("-");
+        rows.push_back(ref);
     }
+    for (int i = 0; i < SolverSet::kCount; ++i) {
+        if (!solvers_.isShown(level, i)) continue;
+        const Run& r = runs_[i];
+        TableRow row{solvers_.shortLabel(level, i), solvers_.color(i), {}};
+        if (r.diverged) {
+            row.cells.assign(headers.size(), "-");
+            row.cells[0] = "diverge";
+        } else {
+            const double energy = problem_.energy(r.y[0], r.y[1]);
+            if (!researcher) row.cells.push_back(strf("%.3f", energy));
+            if (lycee) row.cells.push_back(strf("%+.1e", energy - exactEnergy));
+            if (researcher) row.cells.push_back(strf("%+.1e", (energy - exactEnergy) / e0));
+            row.cells.push_back(strf("%.1e", std::abs(r.y[0] - xe)));
+        }
+        rows.push_back(row);
+    }
+    drawResultTable("erreurs", headers, rows);
 
     if (lycee) {
         ImGui::SeparatorText("Solution exacte");
