@@ -9,6 +9,7 @@
 #include "physicslab/core/Solver.hpp"
 #include "physicslab/core/Vec3.hpp"
 #include "physicslab/core/World.hpp"
+#include "physicslab/mechanics/Oscillator.hpp"
 #include "physicslab/mechanics/Projectile.hpp"
 
 namespace {
@@ -260,6 +261,170 @@ void testRK45() {
     CHECK(tight.evaluations() >= 7 * tight.acceptedSteps());
 }
 
+// --- M2 : oscillateur harmonique -------------------------------------------------------
+
+OscillatorProblem makeOscillator(double zeta, double forceAmplitude, double forceOmega) {
+    OscillatorProblem p;
+    p.mass = 1.3;
+    p.stiffness = 12.0;
+    p.x0 = 0.7;
+    p.v0 = -0.4;
+    p.damping = zeta * 2.0 * std::sqrt(p.stiffness * p.mass);
+    p.forceAmplitude = forceAmplitude;
+    p.forceFrequency = forceOmega;
+    return p;
+}
+
+// La solution exacte vérifie-t-elle x' = v et m v' = -k x - c v + F0 cos(w t) ? (différences centrées)
+void checkOscillatorResidual(const OscillatorProblem& p, double t) {
+    const double h = 1e-5;
+    double x, v, xa, va, xb, vb;
+    p.exact(t, x, v);
+    p.exact(t + h, xa, va);
+    p.exact(t - h, xb, vb);
+    CHECK_NEAR((xa - xb) / (2.0 * h), v, 1e-6);
+    const double acceleration = (-p.stiffness * x - p.damping * v + p.forceAmplitude * std::cos(p.forceFrequency * t)) / p.mass;
+    CHECK_NEAR((va - vb) / (2.0 * h), acceleration, 1e-6);
+}
+
+void testOscillatorExact() {
+    const double w0 = makeOscillator(0, 0, 0).omega0();
+    const double zetas[] = {0.0, 0.2, 1.0, 2.5};
+    for (double z : zetas) {
+        for (int forced = 0; forced < 2; ++forced) {
+            const OscillatorProblem p = makeOscillator(z, forced ? 3.0 : 0.0, 0.8 * w0);
+            double x, v;
+            p.exact(0.0, x, v);
+            CHECK_NEAR(x, p.x0, 1e-12);  // conditions initiales respectées
+            CHECK_NEAR(v, p.v0, 1e-12);
+            for (double t : {0.3, 1.1, 2.9}) checkOscillatorResidual(p, t);
+        }
+    }
+
+    // Résonance exacte sans frottement (solution séculaire) et ses voisines.
+    const OscillatorProblem res = makeOscillator(0.0, 2.0, w0);
+    for (double t : {0.5, 2.0, 4.0}) checkOscillatorResidual(res, t);
+    OscillatorProblem near = res;
+    near.forceFrequency = w0 * (1.0 + 1e-7);
+    CHECK_NEAR(near.position(3.0), res.position(3.0), 1e-5);  // continuité à travers la résonance
+
+    // Régime critique : continu en zeta (sous-critique, critique, sur-critique).
+    const double t = 1.3;
+    const double below = makeOscillator(1.0 - 1e-7, 0, 0).position(t);
+    const double crit = makeOscillator(1.0, 0, 0).position(t);
+    const double above = makeOscillator(1.0 + 1e-7, 0, 0).position(t);
+    CHECK_NEAR(below, crit, 1e-5);
+    CHECK_NEAR(above, crit, 1e-5);
+    CHECK(makeOscillator(1.0 - 1e-7, 0, 0).regime() == DampingRegime::Underdamped);
+    CHECK(makeOscillator(1.0, 0, 0).regime() == DampingRegime::Critical);
+    CHECK(makeOscillator(1.0 + 1e-7, 0, 0).regime() == DampingRegime::Overdamped);
+
+    // Oscillateur libre : périodique et d'énergie constante.
+    const OscillatorProblem freeOsc = makeOscillator(0.0, 0, 0);
+    double x, v;
+    freeOsc.exact(freeOsc.period(), x, v);
+    CHECK_NEAR(x, freeOsc.x0, 1e-12);
+    CHECK_NEAR(v, freeOsc.v0, 1e-12);
+    freeOsc.exact(7.3, x, v);
+    CHECK_NEAR(freeOsc.energy(x, v), freeOsc.energy(freeOsc.x0, freeOsc.v0), 1e-12);
+
+    // Amplitude du régime permanent : le maximum de |x| après le transitoire vaut X(w).
+    const OscillatorProblem driven = makeOscillator(0.2, 3.0, 0.8 * w0);
+    double peak = 0.0;
+    const double tStart = 80.0, span = 2.0 * constants::pi / driven.forceFrequency;
+    for (int i = 0; i <= 20000; ++i) peak = std::max(peak, std::abs(driven.position(tStart + span * i / 20000.0)));
+    CHECK_NEAR(peak, driven.steadyStateAmplitude(driven.forceFrequency), 1e-6);
+
+    // Le maximum de X(w) est bien en w_res = sqrt(w0^2 - 2 g^2).
+    const double wRes = driven.resonanceOmega();
+    CHECK(driven.steadyStateAmplitude(wRes) > driven.steadyStateAmplitude(wRes * 0.97));
+    CHECK(driven.steadyStateAmplitude(wRes) > driven.steadyStateAmplitude(wRes * 1.03));
+}
+
+void testOscillatorConvergence() {
+    const OscillatorProblem p = makeOscillator(0.15, 2.0, 2.2);
+    const double tEnd = 3.0 * p.period();
+
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    auto ratio = [&](Solver& s, int n) { return oscillatorError(p, s, n, tEnd) / oscillatorError(p, s, 2 * n, tEnd); };
+    // Euler n'est asymptotique (rapport 2) qu'à petit pas : à 400 pas le rapport vaut encore 2,17.
+    CHECK_NEAR(ratio(euler, 1600), 2.0, 0.15);
+    CHECK_NEAR(ratio(symplectic, 1600), 2.0, 0.15);
+    CHECK_NEAR(ratio(verlet, 100), 4.0, 0.4);
+    CHECK_NEAR(ratio(rk4, 40), 16.0, 2.0);
+
+    // Oscillateur libre observé à 2,7 périodes (instant générique) : Euler symplectique d'ordre 1, Verlet d'ordre 2.
+    // Observé à un multiple exact de la période il paraîtrait d'ordre 2 et 4 (sur-convergence), voir oscillatorError.
+    OscillatorProblem freeOsc = makeOscillator(0.0, 0.0, 0.0);
+    freeOsc.v0 = 0.0;
+    auto freeRatio = [&](Solver& s, int n) {
+        const double tf = 2.7 * freeOsc.period();
+        return oscillatorError(freeOsc, s, n, tf) / oscillatorError(freeOsc, s, 2 * n, tf);
+    };
+    CHECK_NEAR(freeRatio(verlet, 100), 4.0, 0.4);
+    CHECK_NEAR(freeRatio(symplectic, 1600), 2.0, 0.15);
+}
+
+// Le coeur de M2 : l'énergie d'un oscillateur idéal selon le solveur (k = 4 pi^2, m = 1 : T = 1 s).
+void testOscillatorEnergy() {
+    OscillatorProblem p;
+    p.mass = 1.0;
+    p.stiffness = 4.0 * constants::pi * constants::pi;
+    p.x0 = 1.0;
+    p.v0 = 0.0;
+    const double w0 = p.omega0(), dt = 0.02;  // 50 pas par période
+    const int periods = 100, perPeriod = 50, steps = periods * perPeriod;
+    const OdeFunction f = p.rhs();
+    const double e0 = p.energy(p.x0, p.v0);
+
+    auto run = [&](Solver& solver, double& maxFirst, double& maxLast, double& meanFirst, double& meanLast, double& finalRatio) {
+        State y = p.initialState();
+        double t = 0.0;
+        maxFirst = maxLast = meanFirst = meanLast = 0.0;
+        for (int i = 1; i <= steps; ++i) {
+            t += advance(solver, f, t, y, dt);
+            const double rel = p.energy(y[0], y[1]) / e0;
+            if (i <= 10 * perPeriod) maxFirst = std::max(maxFirst, std::abs(rel - 1.0));
+            if (i > (periods - 10) * perPeriod) maxLast = std::max(maxLast, std::abs(rel - 1.0));
+            if (i <= 10 * perPeriod) meanFirst += rel / (10 * perPeriod);
+            if (i > (periods - 10) * perPeriod) meanLast += rel / (10 * perPeriod);
+            finalRatio = rel;
+        }
+    };
+
+    double maxFirst, maxLast, meanFirst, meanLast, finalRatio = 0.0;
+
+    // Euler explicite : chaque pas multiplie l'énergie par exactement (1 + w0^2 dt^2). Instable pour tout dt.
+    ExplicitEuler euler;
+    run(euler, maxFirst, maxLast, meanFirst, meanLast, finalRatio);
+    const double predicted = std::pow(1.0 + w0 * w0 * dt * dt, steps);
+    CHECK_NEAR(finalRatio / predicted, 1.0, 1e-9);
+    CHECK(finalRatio > 100.0);
+
+    // Euler symplectique : énergie bornée, sans dérive séculaire (l'amplitude des oscillations ne grandit pas).
+    SymplecticEuler symplectic;
+    run(symplectic, maxFirst, maxLast, meanFirst, meanLast, finalRatio);
+    CHECK(maxFirst < 0.15);
+    CHECK(maxLast < 1.01 * maxFirst);
+
+    // Verlet : Hamiltonien modifié conservé => énergie bornée (ordre 2), moyenne sur 10 périodes sans dérive
+    // (écart très inférieur à l'amplitude des oscillations de l'énergie).
+    VelocityVerlet verlet;
+    run(verlet, maxFirst, maxLast, meanFirst, meanLast, finalRatio);
+    CHECK(maxFirst < 0.02);
+    CHECK(maxLast < 1.01 * maxFirst);
+    CHECK(std::abs(meanLast - meanFirst) < 0.1 * maxFirst);
+
+    // RK4 : très légère dissipation numérique, de l'ordre de (w0 dt)^6 par pas.
+    RK4 rk4;
+    run(rk4, maxFirst, maxLast, meanFirst, meanLast, finalRatio);
+    CHECK(finalRatio < 1.0);
+    CHECK(finalRatio > 0.999);
+}
+
 }  // namespace
 
 int main() {
@@ -272,6 +437,9 @@ int main() {
     testConvergenceOrders();
     testPolynomialExactness();
     testRK45();
+    testOscillatorExact();
+    testOscillatorConvergence();
+    testOscillatorEnergy();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");

@@ -33,7 +33,7 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
-./build/physicslab --level 5                 # démarre au niveau pédagogique 5 (1 à 6)
+./build/physicslab --level 5 --sim 2        # niveau pédagogique 5 (1 à 6), simulation M2 (1 = M1, 2 = M2)
 ```
 
 Si le dépôt a été cloné sans `--recurse-submodules` : `git submodule update --init --recursive`.
@@ -41,8 +41,9 @@ Si le dépôt a été cloné sans `--recurse-submodules` : `git submodule update
 ## Structure du dépôt
 
 ```
-include/physicslab/   en-têtes publics : core/ (maths, solveurs, monde), render/ (OpenGL)
-src/                  sources : core/, render/, app/ (fenêtre et interface)
+include/physicslab/   en-têtes publics : core/ (maths, solveurs, monde), mechanics/ (problèmes de référence
+                      avec solution exacte), render/ (OpenGL)
+src/                  sources : core/, mechanics/, render/, app/ (fenêtre, interface, un module par simulation)
 shaders/              *.comp, *.vert, *.frag
 tests/                validations (invariants, solutions analytiques, écart CPU/GPU)
 third_party/          GLFW 3.4, ImGui 1.92 (docking), ImPlot 1.0 en sous-modules ; GLAD généré (GL 4.5 core)
@@ -58,7 +59,7 @@ Ordre de progression (cocher au fil des modules) :
 - [ ] Mécanique
   - [x] M0 : socle (CMake, fenêtre, ImGui docking, maths, interface Solver, sélecteur de niveau)
   - [x] M1 : projectile avec frottement, comparaison Euler / Euler symplectique / Verlet / RK4 / RK45
-  - [ ] M2 : ressort-masse (libre, amorti, forcé)
+  - [x] M2 : ressort-masse (libre, amorti, forcé, résonance)
   - [ ] M3 : pendule simple puis double
   - [ ] M4 : gravitation, Kepler, N-corps
   - [ ] M5 : collisions et frottements

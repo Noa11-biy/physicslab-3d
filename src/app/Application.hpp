@@ -8,6 +8,8 @@ struct AppOptions {
     bool smokeTest = false;
     // Niveau pédagogique au démarrage (1 à 6).
     int level = 3;
+    // Simulation affichée au démarrage (1 = M1 projectile, 2 = M2 ressort-masse).
+    int simulation = 1;
 };
 
 int runApplication(const AppOptions& options);

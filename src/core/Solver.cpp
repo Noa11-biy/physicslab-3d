@@ -128,4 +128,14 @@ double RK45::step(const OdeFunction& f, double t, State& y, double dt) {
     }
 }
 
+double advance(Solver& solver, const OdeFunction& f, double t, State& y, double dt) {
+    double elapsed = 0.0;
+    while (dt - elapsed > 1e-12 * dt) {
+        const double h = solver.step(f, t + elapsed, y, dt - elapsed);
+        if (!(h > 0.0)) break;  // garde-fou : un solveur défaillant ne doit pas boucler
+        elapsed += h;
+    }
+    return elapsed;
+}
+
 }  // namespace pl

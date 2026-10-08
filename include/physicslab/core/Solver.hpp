@@ -96,4 +96,8 @@ private:
     int accepted_ = 0, rejected_ = 0, evaluations_ = 0;
 };
 
+// Avance y de t à t + dt en enchaînant les pas du solveur (plusieurs si le solveur est adaptatif).
+// Renvoie la durée réellement avancée, égale à dt sauf défaillance du solveur.
+double advance(Solver& solver, const OdeFunction& f, double t, State& y, double dt);
+
 }  // namespace pl
