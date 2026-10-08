@@ -1,6 +1,7 @@
 // Validation du socle : maths de base + comparaison du solveur à des solutions analytiques.
 // Pas de framework externe : un CHECK minimal suffit pour M0.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "physicslab/core/World.hpp"
 #include "physicslab/mechanics/Bounce.hpp"
 #include "physicslab/mechanics/Collision.hpp"
+#include "physicslab/mechanics/Cradle.hpp"
 #include "physicslab/mechanics/DoublePendulum.hpp"
 #include "physicslab/mechanics/Friction.hpp"
 #include "physicslab/mechanics/Kepler.hpp"
@@ -2025,6 +2027,396 @@ void testTwoBallContact() {
     }
 }
 
+// ---- M5c : berceau de Newton, contact de Hertz ----
+
+// Deux billes identiques de masse 1, raideur 1e4, vitesse d'approche 1 (unités normalisées) : une bille lancée sur une bille au repos.
+CradleProblem makeCradle(int balls, int launched, double stiffness = 1e4, double speed = 1.0) {
+    CradleProblem p;
+    p.balls = balls;
+    p.launched = launched;
+    p.stiffness = stiffness;
+    p.speed = speed;
+    return p;
+}
+
+void testHertzReference() {
+    // Constante du temps de contact (4/5) Gamma(2/5) Gamma(1/2) / Gamma(9/10) : 2,9433 (valeur classique 2,943).
+    CHECK_NEAR(hertz::contactConstant(), 2.9433, 1e-4);
+    CHECK_NEAR(hertz::force(1e4, 0.02), 1e4 * std::pow(0.02, 1.5), 1e-12);
+    CHECK_NEAR(hertz::force(1e4, 0.0), 0.0, 0.0);
+    CHECK_NEAR(hertz::force(1e4, -0.01), 0.0, 0.0);               // pas de contact : pas de force (et jamais de force attractive)
+    CHECK_NEAR(hertz::potentialEnergy(1e4, 0.02), 0.4 * 1e4 * std::pow(0.02, 2.5), 1e-12);
+    CHECK_NEAR(hertz::potentialEnergy(1e4, -0.01), 0.0, 0.0);
+
+    // delta_max : l'énergie cinétique relative 1/2 mu v^2 devient (2/5) k delta^(5/2) (bilan d'énergie à l'arrêt relatif).
+    const double mu = 0.5, v = 1.0, k = 1e4;
+    const double dMax = hertz::maxCompression(mu, v, k);
+    CHECK_NEAR(hertz::potentialEnergy(k, dMax), 0.5 * mu * v * v, 1e-14);
+    // Lois d'échelle : delta_max ~ v^(4/5), T ~ delta_max / v ~ v^(-1/5), delta_max ~ k^(-2/5).
+    CHECK_NEAR(hertz::maxCompression(mu, 2.0 * v, k) / dMax, std::pow(2.0, 0.8), 1e-12);
+    CHECK_NEAR(hertz::contactDuration(mu, 2.0 * v, k) / hertz::contactDuration(mu, v, k), std::pow(2.0, -0.2), 1e-12);
+    CHECK_NEAR(hertz::maxCompression(mu, v, 2.0 * k) / dMax, std::pow(2.0, -0.4), 1e-12);
+    CHECK_NEAR(hertz::contactDuration(mu, v, k), hertz::contactConstant() * dMax / v, 1e-15);
+}
+
+// Choc de deux billes intégré par RK45 serré, comparé aux références exactes (l'événement et l'EDO ne partagent aucun code
+// avec la fonction bêta de la formule).
+void testHertzTwoBalls() {
+    CradleProblem p = makeCradle(2, 1);
+    const double mu = 0.5 * p.mass;
+    const double dMax = hertz::maxCompression(mu, p.speed, p.stiffness);
+    const double T = hertz::contactDuration(mu, p.speed, p.stiffness);
+
+    RK45 rk;
+    rk.relTol = 1e-12;
+    rk.absTol = 1e-14;
+    const OdeFunction f = p.rhs();
+    State y = p.initialState();
+    const double E0 = p.energy(y);
+    CHECK_NEAR(E0, 0.5 * p.mass * p.speed * p.speed, 1e-15);
+    CHECK_NEAR(p.compression(y, 0), 0.0, 1e-15);                // les billes se touchent sans compression au départ
+
+    // Compression maximale : vitesse relative nulle (v0 = v1), à la mi-durée du contact.
+    const EventFunction relativeSpeed = [](double, const State& s) { return s[2] - s[3]; };
+    EventStep r = advanceToEvent(rk, f, relativeSpeed, 0.0, y, 2.0 * T);
+    CHECK(r.event);
+    CHECK_NEAR(p.compression(y, 0), dMax, 1e-8 * dMax);
+    CHECK_NEAR(r.elapsed, 0.5 * T, 1e-8 * T);
+    CHECK_NEAR(p.energy(y), E0, 1e-10);
+    CHECK_NEAR(p.potentialEnergy(y), 0.5 * mu * p.speed * p.speed, 1e-9);   // toute l'énergie relative est stockée dans le contact
+
+    // Fin du contact : la compression revient à 0 à t = T ; sortie élastique = échange des vitesses.
+    const EventFunction compression = [&p](double, const State& s) { return p.compression(s, 0); };
+    const double tHalf = r.elapsed;
+    r = advanceToEvent(rk, f, compression, tHalf, y, 2.0 * T);
+    CHECK(r.event);
+    CHECK_NEAR(tHalf + r.elapsed, T, 1e-8 * T);
+    CHECK_NEAR(y[2], 0.0, 1e-9);
+    CHECK_NEAR(y[3], p.speed, 1e-9);
+    CHECK_NEAR(p.energy(y), E0, 1e-10);
+    CHECK_NEAR(p.momentum(y), p.mass * p.speed, 1e-12);
+}
+
+// Chaîne de 5 billes (une lancée) intégrée par RK4 : invariants, fin de collision, vitesses ordonnées.
+void testCradleInvariants() {
+    CradleProblem p = makeCradle(5, 1);
+    RK4 rk4;
+    const double dt = p.suggestedStep();
+    CHECK(dt > 0.0 && dt < hertz::contactDuration(0.5 * p.mass, p.speed, p.stiffness));
+
+    const State y0 = p.initialState();
+    CHECK(!p.collisionOver(y0));                                // la bille lancée touche déjà la première bille au repos
+    CHECK_NEAR(p.momentum(y0), p.mass * p.speed, 1e-15);
+    CHECK_NEAR(p.kineticEnergy(y0), 0.5 * p.mass * p.speed * p.speed, 1e-15);
+    CHECK_NEAR(p.potentialEnergy(y0), 0.0, 1e-15);
+
+    const CradleOutcome out = p.run(rk4, dt, 5.0);
+    CHECK(out.finished);
+    CHECK(out.time > 0.0 && out.time < 1.0);                    // l'onde traverse 4 contacts en bien moins d'une unité de temps
+    CHECK(out.maxCompression > 0.0);
+    CHECK((int)out.velocities.size() == 5);
+
+    double momentum = 0.0, kinetic = 0.0;
+    for (double v : out.velocities) { momentum += p.mass * v; kinetic += 0.5 * p.mass * v * v; }
+    CHECK_NEAR(momentum, p.mass * p.speed, 1e-12);              // impulsion conservée (forces égales et opposées)
+    CHECK_NEAR(kinetic, 0.5 * p.mass * p.speed * p.speed, 1e-5);   // énergie : plus aucun contact, tout est cinétique
+    for (int i = 0; i + 1 < 5; ++i) CHECK(out.velocities[i] <= out.velocities[i + 1] + 1e-12);   // plus aucun choc ne peut avoir lieu
+    CHECK(out.velocities[4] > 0.5);                             // la dernière bille part
+}
+
+// Issue de la collision de N billes (RK45 serré : l'erreur d'intégration est très inférieure aux écarts testés).
+CradleOutcome runCradleTight(int balls, int launched, double stiffness = 1e4, double speed = 1.0) {
+    const CradleProblem p = makeCradle(balls, launched, stiffness, speed);
+    RK45 rk;
+    rk.relTol = 1e-12;
+    rk.absTol = 1e-14;
+    return p.run(rk, p.suggestedStep(), 50.0);
+}
+
+// Une bille de vitesse v frappe deux billes au repos : impulsion et énergie ne fixent PAS le résultat. Ce n'est pas un point
+// mais une courbe : v1 = -x v, et v2, v3 racines de t^2 - (1 + x) t + x (1 + x) = 0, avec 0 <= x <= 1/3.
+void testThreeBallFamily() {
+    for (double x : {0.0, 0.05, 0.071, 0.1, 0.25, 1.0 / 3.0}) {
+        const std::array<double, 3> v = cradle::threeBallFamily(x, 2.0);
+        CHECK_NEAR(v[0] + v[1] + v[2], 2.0, 1e-14);                                  // impulsion
+        CHECK_NEAR(v[0] * v[0] + v[1] * v[1] + v[2] * v[2], 4.0, 1e-13);              // énergie
+        CHECK_NEAR(v[0], -2.0 * x, 1e-15);
+        CHECK(v[0] <= v[1] + 1e-15 && v[1] <= v[2] + 1e-15);                          // plus aucun choc possible
+    }
+    // Les deux extrémités : « une entre, une sort » (x = 0), et les deux dernières billes ensemble (x = 1/3).
+    const std::array<double, 3> a = cradle::threeBallFamily(0.0, 1.0), b = cradle::threeBallFamily(1.0 / 3.0, 1.0);
+    CHECK_NEAR(a[0], 0.0, 1e-15);
+    CHECK_NEAR(a[1], 0.0, 1e-15);
+    CHECK_NEAR(a[2], 1.0, 1e-15);
+    CHECK_NEAR(b[0], -1.0 / 3.0, 1e-15);
+    CHECK_NEAR(b[1], 2.0 / 3.0, 1e-12);       // racine double (discriminant nul)
+    CHECK_NEAR(b[2], 2.0 / 3.0, 1e-12);
+    // Exemple à la main : x = 0,1 donne v2, v3 = (1,1 -/+ sqrt(0,77)) / 2.
+    const std::array<double, 3> c = cradle::threeBallFamily(0.1, 1.0);
+    CHECK_NEAR(c[1], 0.5 * (1.1 - std::sqrt(0.77)), 1e-14);
+    CHECK_NEAR(c[2], 0.5 * (1.1 + std::sqrt(0.77)), 1e-14);
+    // Hors de l'intervalle : ramené aux bornes (pas de racine d'un nombre négatif).
+    const std::array<double, 3> d = cradle::threeBallFamily(0.5, 1.0), e = cradle::threeBallFamily(-0.2, 1.0);
+    CHECK_NEAR(d[0], -1.0 / 3.0, 1e-15);
+    CHECK_NEAR(e[2], 1.0, 1e-15);
+}
+
+// La dynamique du contact tranche : le résultat de Hertz ne dépend ni de la raideur ni de la vitesse (une seule échelle de longueur),
+// et il tombe sur la courbe des solutions, strictement entre ses deux extrémités.
+void testHertzThreeBalls() {
+    const CradleOutcome ref = runCradleTight(3, 1);
+    CHECK(ref.finished);
+    const double x = -ref.velocities[0];
+    CHECK_NEAR(x, 0.070952, 2e-6);                          // mesuré : 0,070952 ; ni 0 (impulsions) ni 1/3
+    CHECK_NEAR(ref.velocities[1], 0.076403, 2e-6);
+    CHECK_NEAR(ref.velocities[2], 0.994549, 2e-6);
+    const std::array<double, 3> onCurve = cradle::threeBallFamily(x, 1.0);
+    CHECK_NEAR(ref.velocities[1], onCurve[1], 1e-9);        // le point mesuré est bien sur la famille (impulsion et énergie conservées)
+    CHECK_NEAR(ref.velocities[2], onCurve[2], 1e-9);
+
+    // Mêmes vitesses relatives quelles que soient la raideur et la vitesse (rapportées à la vitesse initiale).
+    const CradleOutcome stiff = runCradleTight(3, 1, 1e6, 1.0), fast = runCradleTight(3, 1, 1e4, 3.0), slow = runCradleTight(3, 1, 2e3, 0.2);
+    for (int i = 0; i < 3; ++i) {
+        CHECK_NEAR(stiff.velocities[i], ref.velocities[i], 1e-7);
+        CHECK_NEAR(fast.velocities[i] / 3.0, ref.velocities[i], 1e-7);
+        CHECK_NEAR(slow.velocities[i] / 0.2, ref.velocities[i], 1e-7);
+    }
+    CHECK(stiff.time < 0.2 * ref.time);                     // un contact plus raide est plus court (T ~ k^(-2/5) : 100 fois plus raide, 6,3 fois plus court)
+}
+
+// Chaîne de N billes, n lancées : symétrie exacte (miroir + changement de repère galiléen) entre n lancées et N - n lancées,
+// et résultats de référence (RK45 serré) comme ancrage de non-régression.
+void testHertzChain() {
+    for (int N : {3, 4, 5, 6}) {
+        for (int n = 1; n < N; ++n) {
+            const CradleOutcome a = runCradleTight(N, n), b = runCradleTight(N, N - n);
+            CHECK(a.finished && b.finished);
+            for (int i = 0; i < N; ++i) CHECK_NEAR(a.velocities[i], 1.0 - b.velocities[N - 1 - i], 1e-8);
+        }
+    }
+    const CradleOutcome five = runCradleTight(5, 1);   // une bille sur quatre : la dernière part à 0,989, les autres restent petites
+    const double expected1[5] = {-0.071085, -0.030274, -0.014464, 0.127045, 0.988777};
+    for (int i = 0; i < 5; ++i) CHECK_NEAR(five.velocities[i], expected1[i], 2e-6);
+    const CradleOutcome two = runCradleTight(5, 2);    // deux sur trois : pas tout à fait « deux entrent, deux sortent »
+    const double expected2[5] = {-0.112615, -0.041960, 0.214486, 0.800367, 1.139722};
+    for (int i = 0; i < 5; ++i) CHECK_NEAR(two.velocities[i], expected2[i], 2e-6);
+    for (const CradleOutcome* o : {&five, &two}) {
+        double momentum = 0.0, kinetic = 0.0;
+        for (double v : o->velocities) { momentum += v; kinetic += 0.5 * v * v; }
+        CHECK_NEAR(momentum, o == &five ? 1.0 : 2.0, 1e-10);
+        CHECK_NEAR(kinetic, o == &five ? 0.5 : 1.0, 1e-9);
+    }
+    // Le résultat de RK4 au pas conseillé est le même à 1e-5 près (contact lisse à l'échelle du pas).
+    {
+        const CradleProblem p = makeCradle(5, 1);
+        RK4 rk4;
+        const CradleOutcome o = p.run(rk4, p.suggestedStep(), 50.0);
+        for (int i = 0; i < 5; ++i) CHECK_NEAR(o.velocities[i], five.velocities[i], 1e-5);
+    }
+}
+
+// Vitesses initiales d'une chaîne de N billes dont les n premières sont lancées à la vitesse 1.
+std::vector<double> launchVelocities(int N, int n) {
+    std::vector<double> v(N, 0.0);
+    for (int i = 0; i < n; ++i) v[i] = 1.0;
+    return v;
+}
+
+// Impulsions séquentielles : un choc binaire à la fois (collideSpheres de M5b), jusqu'à ce qu'aucune paire voisine ne se rapproche.
+void testSequentialImpulses() {
+    using cradle::ResolveOrder;
+    // e = 1 et masses égales : chaque choc ÉCHANGE les vitesses, donc le résultat est le tri des vitesses : n entrent, n sortent,
+    // quel que soit l'ordre de résolution.
+    for (ResolveOrder order : {ResolveOrder::LeftToRight, ResolveOrder::RightToLeft}) {
+        for (int N = 3; N <= 7; ++N) {
+            for (int n = 1; n < N; ++n) {
+                const cradle::ImpulseResult r = cradle::sequentialImpulses(launchVelocities(N, n), 1.0, order);
+                CHECK(r.converged);
+                CHECK(r.collisions >= 1);
+                CHECK_NEAR(r.energyLoss, 0.0, 1e-15);
+                for (int i = 0; i < N; ++i) CHECK_NEAR(r.velocities[i], i < N - n ? 0.0 : 1.0, 1e-15);
+            }
+        }
+    }
+    // Chaque bille ne change de vitesse qu'à cause de ses voisines et chaque choc conserve l'impulsion, même avec perte.
+    // e = 0 : les billes finissent ensemble (impulsion n v partagée entre N billes) ; tolérance de la convergence 1e-12.
+    for (ResolveOrder order : {ResolveOrder::LeftToRight, ResolveOrder::RightToLeft}) {
+        const cradle::ImpulseResult r = cradle::sequentialImpulses(launchVelocities(5, 2), 0.0, order);
+        CHECK(r.converged);
+        for (double v : r.velocities) CHECK_NEAR(v, 2.0 / 5.0, 1e-9);
+        CHECK_NEAR(r.energyLoss, 0.5 * 2.0 - 0.5 * 5.0 * 0.4 * 0.4, 1e-9);   // 1 - 0,4 = 0,6 : perte parfaitement inélastique
+    }
+    // e = 0,9 : l'impulsion est conservée, l'énergie diminue, les vitesses finissent rangées (plus aucun choc possible).
+    for (ResolveOrder order : {ResolveOrder::LeftToRight, ResolveOrder::RightToLeft}) {
+        for (int N = 3; N <= 7; ++N) {
+            const cradle::ImpulseResult r = cradle::sequentialImpulses(launchVelocities(N, 1), 0.9, order);
+            CHECK(r.converged);
+            double sum = 0.0, kinetic = 0.0;
+            for (int i = 0; i < N; ++i) {
+                sum += r.velocities[i];
+                kinetic += 0.5 * r.velocities[i] * r.velocities[i];
+                if (i + 1 < N) CHECK(r.velocities[i] <= r.velocities[i + 1] + 1e-11);
+            }
+            CHECK_NEAR(sum, 1.0, 1e-12);
+            CHECK(r.energyLoss > 0.0 && r.energyLoss < 0.5);
+            CHECK_NEAR(kinetic, 0.5 - r.energyLoss, 1e-12);   // pertes cumulées choc par choc = différence des énergies cinétiques
+        }
+    }
+    // Entrée dégénérée : aucune bille qui s'approche d'une autre, rien ne bouge.
+    const cradle::ImpulseResult none = cradle::sequentialImpulses({0.0, 1.0, 2.0}, 0.5);
+    CHECK(none.collisions == 0 && none.sweeps == 1 && none.converged);
+    CHECK_NEAR(none.velocities[1], 1.0, 0.0);
+}
+
+// Où l'ordre de résolution compte et où il ne compte pas (mesuré, et contraire à l'intuition).
+void testSequentialOrder() {
+    using cradle::ResolveOrder;
+    // Berceau : seule la paire de tête se rapproche à chaque instant, la causalité impose la suite des chocs (0,1) puis (1,2)...
+    // Les deux ordres de passe appliquent donc les mêmes chocs dans le même ordre : résultat identique, même avec perte (e < 1).
+    int cases = 0;
+    for (int N = 3; N <= 9; ++N) {
+        for (int n = 1; n < N; ++n) {
+            for (double e : {0.99, 0.9, 0.7, 0.5, 0.2, 0.05, 0.0}) {
+                const cradle::ImpulseResult a = cradle::sequentialImpulses(launchVelocities(N, n), e, ResolveOrder::LeftToRight);
+                const cradle::ImpulseResult b = cradle::sequentialImpulses(launchVelocities(N, n), e, ResolveOrder::RightToLeft);
+                CHECK(a.converged && b.converged);
+                for (int i = 0; i < N; ++i) CHECK_NEAR(a.velocities[i], b.velocities[i], 1e-15);
+                ++cases;
+            }
+        }
+    }
+    CHECK(cases == 245);
+    // Bille prise entre deux voisines qui s'approchent toutes deux : deux chocs simultanés, l'ordre devient un choix du modèle.
+    // Avec e = 1 (échange de vitesses = tri) il n'y paraît pas ; avec e = 0,5 l'écart est de l'ordre de 0,1 (mesuré : 0,07 sur (1; 0,5; 0; 0)).
+    const std::vector<double> squeezed = {1.0, 0.5, 0.0, 0.0};
+    {
+        const cradle::ImpulseResult a = cradle::sequentialImpulses(squeezed, 1.0, ResolveOrder::LeftToRight);
+        const cradle::ImpulseResult b = cradle::sequentialImpulses(squeezed, 1.0, ResolveOrder::RightToLeft);
+        for (int i = 0; i < 4; ++i) CHECK_NEAR(a.velocities[i], b.velocities[i], 1e-15);
+    }
+    {
+        const cradle::ImpulseResult a = cradle::sequentialImpulses(squeezed, 0.5, ResolveOrder::LeftToRight);
+        const cradle::ImpulseResult b = cradle::sequentialImpulses(squeezed, 0.5, ResolveOrder::RightToLeft);
+        double gap = 0.0;
+        for (int i = 0; i < 4; ++i) gap = std::max(gap, std::abs(a.velocities[i] - b.velocities[i]));
+        CHECK(gap > 0.05 && gap < 0.1);
+        double pa = 0.0, pb = 0.0;
+        for (int i = 0; i < 4; ++i) { pa += a.velocities[i]; pb += b.velocities[i]; }
+        CHECK_NEAR(pa, 1.5, 1e-12);                    // l'impulsion reste conservée dans les deux cas
+        CHECK_NEAR(pb, 1.5, 1e-12);
+    }
+}
+
+// Écart initial entre le groupe lancé et le reste de la chaîne : le contact commence plus tard, sans changer le résultat.
+void testCradleGap() {
+    CradleProblem p = makeCradle(3, 1);
+    p.gap = 0.05;
+    const State y0 = p.initialState();
+    CHECK_NEAR(y0[0], -0.05, 1e-15);                      // la bille lancée est reculée de `gap`
+    CHECK_NEAR(y0[1], 1.0, 1e-15);
+    CHECK_NEAR(p.compression(y0, 0), -0.05, 1e-15);      // séparées : compression négative
+    CHECK_NEAR(p.compression(y0, 1), 0.0, 1e-15);
+    CHECK(!p.collisionOver(y0));                         // la bille approche : le choc n'a pas encore eu lieu
+
+    const CradleOutcome flush = runCradleTight(3, 1);
+    RK45 rk;
+    rk.relTol = 1e-12;
+    rk.absTol = 1e-14;
+    const CradleOutcome spaced = p.run(rk, p.suggestedStep(), 50.0);
+    CHECK(spaced.finished);
+    for (int i = 0; i < 3; ++i) CHECK_NEAR(spaced.velocities[i], flush.velocities[i], 1e-8);
+    CHECK_NEAR(spaced.time - flush.time, p.gap / p.speed, 2.0 * p.suggestedStep());   // le choc a lieu après 0,05 s de vol libre
+}
+
+// Référence RK45 serré et erreur des solveurs à pas fixe sur le contact de Hertz.
+void testCradleConvergence() {
+    CradleProblem p = makeCradle(3, 1);
+    p.gap = 0.0123;                                     // le contact démarre à un instant qui n'est pas sur la grille des pas
+    const double tEnd = 0.2;                            // bien après la fin de la collision (0,094 + 0,0123 s)
+
+    // La référence conserve l'impulsion et l'énergie et reproduit le résultat de run() après la collision.
+    const State ref = p.reference(tEnd);
+    CHECK_NEAR(p.momentum(ref), p.mass * p.speed, 1e-12);
+    CHECK_NEAR(p.energy(ref), 0.5 * p.mass * p.speed * p.speed, 1e-10);
+    CHECK(p.collisionOver(ref));
+    const CradleOutcome out = runCradleTight(3, 1);
+    for (int i = 0; i < 3; ++i) CHECK_NEAR(ref[3 + i], out.velocities[i], 1e-8);
+
+    // L'erreur diminue quand le pas diminue, et un schéma d'ordre supérieur fait mieux à pas égal.
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    for (Solver* s : {static_cast<Solver*>(&euler), static_cast<Solver*>(&symplectic), static_cast<Solver*>(&verlet), static_cast<Solver*>(&rk4)}) {
+        const double coarse = cradleError(p, *s, 100, tEnd), fine = cradleError(p, *s, 400, tEnd);
+        CHECK(fine < coarse);
+        CHECK(coarse > 0.0);
+    }
+    CHECK(cradleError(p, rk4, 200, tEnd) < cradleError(p, verlet, 200, tEnd));
+    CHECK(cradleError(p, verlet, 200, tEnd) < cradleError(p, euler, 200, tEnd));
+
+    // Ordres effectifs mesurés (rapport des erreurs pour des pas divisés par 4, de 800 à 3200 pas ou de 400 à 1600).
+    // Euler : ordre 1 (4,07 mesuré) ; Verlet : ordre 2 (15,4 mesuré, soit 3,9 par doublement).
+    const double eulerRatio = cradleError(p, euler, 800, tEnd) / cradleError(p, euler, 3200, tEnd);
+    CHECK(eulerRatio > 3.8 && eulerRatio < 4.4);
+    const double verletRatio = cradleError(p, verlet, 400, tEnd) / cradleError(p, verlet, 1600, tEnd);
+    CHECK(verletRatio > 14.0 && verletRatio < 17.0);
+    // Euler symplectique donne EXACTEMENT les erreurs de Verlet (à l'arrondi : écart mesuré <= 5e-13) : les deux schémas sont
+    // conjugués par un demi-pas de vitesse, qui est l'identité hors contact (état de départ et état final sans force).
+    for (int steps : {50, 100, 400, 1600}) CHECK_NEAR(cradleError(p, symplectic, steps, tEnd), cradleError(p, verlet, steps, tEnd), 1e-11);
+    // RK4 n'atteint PAS l'ordre 4 : la force k delta^(3/2) n'est pas lisse en delta = 0 (début et fin de chaque contact), ce qui
+    // limite l'ordre à 2,5 environ ; l'ordre apparent dépend du décalage du début du contact sur la grille (mesuré 2,29 à 2,75).
+    for (double gap : {0.0, 0.0123, 0.0231, 0.0377}) {
+        CradleProblem q = p;
+        q.gap = gap;
+        const double order = std::log2(cradleError(q, rk4, 200, tEnd) / cradleError(q, rk4, 3200, tEnd)) / 4.0;
+        CHECK(order > 2.0 && order < 3.0);
+    }
+    // RK45 à tolérance par défaut (1e-8) : erreur de l'ordre de 3e-7 (mesuré) ; 88 pas acceptés pour traverser tout [0 ; 0,2] d'un coup.
+    RK45 rk45;
+    CHECK(cradleError(p, rk45, 20, tEnd) < 1e-6);
+    CHECK(rk45.acceptedSteps() > 0 && rk45.acceptedSteps() < 400);
+}
+
+// Amortissement de Hunt-Crossley F = k delta^(3/2) (1 + (3/2) alpha delta') : à la main, l'énergie relative perdue vaut
+// 2 alpha v de l'énergie d'approche (premier ordre), donc la restitution est e = 1 - alpha v.
+void testHertzDamping() {
+    RK45 rk;
+    rk.relTol = 1e-12;
+    rk.absTol = 1e-14;
+    for (double alpha : {0.01, 0.05, 0.1}) {
+        CradleProblem p = makeCradle(2, 1);
+        p.damping = alpha;
+        const CradleOutcome out = p.run(rk, p.suggestedStep(), 5.0);
+        CHECK(out.finished);
+        const double restitution = out.velocities[1] - out.velocities[0];   // vitesse de séparation / vitesse d'approche (1)
+        CHECK_NEAR(out.velocities[0] + out.velocities[1], 1.0, 1e-10);       // la force d'amortissement est aussi égale et opposée
+        CHECK_NEAR(restitution, 1.0 - alpha, 1.5 * alpha * alpha);           // premier ordre : e = 1/(1 + alpha v) = 1 - alpha v + (alpha v)^2 (mesuré)
+        CHECK(restitution < 1.0 && restitution > 0.8);
+        CHECK(out.velocities[0] > 0.0);                                      // pas de recul : l'amortissement ne rend jamais la force attractive
+    }
+    // Sans amortissement (valeur par défaut) la restitution est exactement 1 : contact conservatif de Hertz.
+    {
+        const CradleProblem p = makeCradle(2, 1);
+        CHECK_NEAR(p.damping, 0.0, 0.0);
+        const CradleOutcome out = p.run(rk, p.suggestedStep(), 5.0);
+        CHECK_NEAR(out.velocities[1] - out.velocities[0], 1.0, 1e-9);
+    }
+    // Chaîne amortie : impulsion conservée, énergie perdue (strictement), vitesses rangées. Le recul des premières billes diminue.
+    {
+        CradleProblem p = makeCradle(5, 1);
+        p.damping = 0.05;
+        const CradleOutcome out = p.run(rk, p.suggestedStep(), 50.0);
+        CHECK(out.finished);
+        double momentum = 0.0, kinetic = 0.0;
+        for (double v : out.velocities) { momentum += v; kinetic += 0.5 * v * v; }
+        CHECK_NEAR(momentum, 1.0, 1e-10);
+        CHECK(kinetic < 0.5 - 0.01);
+        for (int i = 0; i + 1 < 5; ++i) CHECK(out.velocities[i] <= out.velocities[i + 1] + 1e-12);
+        CHECK(out.velocities[0] > runCradleTight(5, 1).velocities[0]);       // moins de recul qu'en contact conservatif (-0,071)
+    }
+}
+
 void testPeriapsisTracker() {
     // Solution exacte échantillonnée grossièrement (50 points par période, décalés pour ne pas tomber pile sur un
     // périastre) : exactement 5 périastres sur 5,3 périodes, tous à l'angle 0 (orbite fermée, pas de précession).
@@ -2118,6 +2510,17 @@ int main() {
     testBounceEventDriven();
     testBounceNaive();
     testTwoBallContact();
+    testHertzReference();
+    testHertzTwoBalls();
+    testCradleInvariants();
+    testThreeBallFamily();
+    testHertzThreeBalls();
+    testHertzChain();
+    testSequentialImpulses();
+    testSequentialOrder();
+    testCradleGap();
+    testCradleConvergence();
+    testHertzDamping();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");
