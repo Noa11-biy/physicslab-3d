@@ -13,6 +13,7 @@
 #include "physicslab/core/World.hpp"
 #include "physicslab/mechanics/DoublePendulum.hpp"
 #include "physicslab/mechanics/Kepler.hpp"
+#include "physicslab/mechanics/NBody.hpp"
 #include "physicslab/mechanics/Oscillator.hpp"
 #include "physicslab/mechanics/Pendulum.hpp"
 #include "physicslab/mechanics/Projectile.hpp"
@@ -953,6 +954,293 @@ void testKeplerAdaptiveStep() {
     CHECK(p.distance(y, p.exact(t)) < 1e-5);
 }
 
+// --- M4b : gravitation à N corps -----------------------------------------------------
+
+void testNBodyAccelerations() {
+    // 2 corps, sans adoucissement : a1 = G m2 / r^2 vers le corps 2, a2 = G m1 / r^2 vers le corps 1 (r = 5, direction 3-4-5).
+    {
+        const double pos[6] = {0, 0, 0, 3, 4, 0};
+        const double m[2] = {2.0, 7.0};
+        double a[6];
+        nbody::accelerations(pos, m, 2, 1.5, 0.0, a);
+        const double g1 = 1.5 * 7.0 / 25.0, g2 = 1.5 * 2.0 / 25.0;
+        CHECK_NEAR(a[0], g1 * 0.6, 1e-15);
+        CHECK_NEAR(a[1], g1 * 0.8, 1e-15);
+        CHECK_NEAR(a[2], 0.0, 1e-15);
+        CHECK_NEAR(a[3], -g2 * 0.6, 1e-15);
+        CHECK_NEAR(a[4], -g2 * 0.8, 1e-15);
+        CHECK_NEAR(a[5], 0.0, 1e-15);
+        CHECK_NEAR(nbody::potentialEnergy(pos, m, 2, 1.5, 0.0), -1.5 * 2.0 * 7.0 / 5.0, 1e-14);
+    }
+    // Adoucissement de Plummer : a = G m r / (r^2 + eps^2)^(3/2), U = -G m1 m2 / sqrt(r^2 + eps^2) ; fini même à r = 0.
+    {
+        const double pos[6] = {0, 0, 0, 3, 0, 0};
+        const double m[2] = {1.0, 1.0};
+        double a[6];
+        nbody::accelerations(pos, m, 2, 1.0, 2.0, a);
+        CHECK_NEAR(a[0], 3.0 / std::pow(13.0, 1.5), 1e-15);
+        CHECK_NEAR(nbody::potentialEnergy(pos, m, 2, 1.0, 2.0), -1.0 / std::sqrt(13.0), 1e-15);
+        const double same[6] = {1, 1, 1, 1, 1, 1};
+        nbody::accelerations(same, m, 2, 1.0, 0.1, a);
+        for (double v : a) CHECK(v == 0.0);
+    }
+    // Amas de 7 corps : 3e loi de Newton (somme des forces nulle) et force = -gradient de l'énergie potentielle.
+    const NBodyProblem c = NBodyProblem::randomCluster(7, 42, 1.0, 0.1);
+    CHECK(c.count() == 7);
+    State y = c.initialState();
+    std::vector<double> acc(21);
+    nbody::accelerations(y.data(), c.mass.data(), 7, c.G, c.softening, acc.data());
+    Vec3 sum;
+    for (int i = 0; i < 7; ++i) sum += c.mass[i] * Vec3{acc[3 * i], acc[3 * i + 1], acc[3 * i + 2]};
+    CHECK_NEAR(sum.norm(), 0.0, 1e-14);
+
+    const double h = 1e-5;
+    for (int i = 0; i < 7; ++i) {
+        for (int k = 0; k < 3; ++k) {
+            State plus = y, minus = y;
+            plus[3 * i + k] += h;
+            minus[3 * i + k] -= h;
+            const double dU = (nbody::potentialEnergy(plus.data(), c.mass.data(), 7, c.G, c.softening) -
+                               nbody::potentialEnergy(minus.data(), c.mass.data(), 7, c.G, c.softening)) / (2.0 * h);
+            CHECK_NEAR(acc[3 * i + k], -dU / c.mass[i], 1e-7);
+        }
+    }
+}
+
+void testNBodyDiagnostics() {
+    // Grandeurs de l'amas : cohérence avec les définitions, centre de masse et impulsion nuls, viriel 2T = -U.
+    const NBodyProblem c = NBodyProblem::randomCluster(7, 42, 1.0, 0.1);
+    const State y = c.initialState();
+    CHECK_NEAR(c.totalMass(), 1.0, 1e-14);
+    CHECK_NEAR(c.centerOfMass(y).norm(), 0.0, 1e-14);
+    CHECK_NEAR(c.momentum(y).norm(), 0.0, 1e-14);
+    CHECK_NEAR(2.0 * c.kineticEnergy(y) / (-c.potentialEnergy(y)), 1.0, 1e-12);
+    CHECK_NEAR(c.energy(y), c.kineticEnergy(y) + c.potentialEnergy(y), 0.0);
+    CHECK(c.kineticEnergy(y) > 0.0 && c.potentialEnergy(y) < 0.0);
+    // même graine : même amas ; graine différente : autre amas
+    const NBodyProblem same = NBodyProblem::randomCluster(7, 42, 1.0, 0.1), other = NBodyProblem::randomCluster(7, 43, 1.0, 0.1);
+    CHECK(same.initialState() == y);
+    CHECK(other.initialState() != y);
+    // Moment cinétique d'une particule isolée : m r x v
+    NBodyProblem one;
+    one.mass = {2.0};
+    one.position = {{1, 2, 3}};
+    one.velocity = {{-1, 0.5, 2}};
+    const State s = one.initialState();
+    const Vec3 L = one.angularMomentum(s), expected = 2.0 * cross({1, 2, 3}, {-1, 0.5, 2});
+    CHECK_NEAR((L - expected).norm(), 0.0, 1e-15);
+    CHECK_NEAR(one.kineticEnergy(s), 0.5 * 2.0 * (1 + 0.25 + 4), 1e-15);
+    CHECK_NEAR(one.potentialEnergy(s), 0.0, 0.0);
+}
+
+void testLagrangeTriangle() {
+    const double s = 2.0, m = 0.7, G = 1.3;
+    const NBodyProblem p = NBodyProblem::lagrangeTriangle(s, m, G);
+    CHECK(p.count() == 3);
+    const double omega = std::sqrt(3.0 * G * m / (s * s * s)), R = s / std::sqrt(3.0), T = 2.0 * constants::pi / omega;
+    const State y0 = p.initialState();
+
+    // Géométrie : sommets à R du centre, côtés s, vitesse v = omega z x r.
+    for (int i = 0; i < 3; ++i) {
+        const Vec3 ri{y0[3 * i], y0[3 * i + 1], y0[3 * i + 2]}, vi{y0[9 + 3 * i], y0[9 + 3 * i + 1], y0[9 + 3 * i + 2]};
+        CHECK_NEAR(ri.norm(), R, 1e-14);
+        CHECK_NEAR((vi - omega * cross({0, 0, 1}, ri)).norm(), 0.0, 1e-14);
+        const int j = (i + 1) % 3;
+        CHECK_NEAR((ri - Vec3{y0[3 * j], y0[3 * j + 1], y0[3 * j + 2]}).norm(), s, 1e-14);
+    }
+    CHECK_NEAR(p.centerOfMass(y0).norm(), 0.0, 1e-14);
+    CHECK_NEAR(p.momentum(y0).norm(), 0.0, 1e-14);
+    CHECK_NEAR(p.angularMomentum(y0).z, 3.0 * m * R * R * omega, 1e-13);
+    CHECK_NEAR(p.energy(y0), -1.5 * G * m * m / s, 1e-13);  // 3 (1/2 m R^2 omega^2) - 3 G m^2 / s
+
+    // Les accélérations valent -omega^2 r (force centripète) : la rotation rigide est bien solution.
+    State f(18);
+    p.rhs()(0.0, y0, f);
+    for (int i = 0; i < 9; ++i) {
+        CHECK_NEAR(f[9 + i], -omega * omega * y0[i], 1e-13);
+        CHECK_NEAR(f[i], y0[9 + i], 0.0);
+    }
+
+    // Solution exacte : rotation d'angle omega t de tout l'état. RK4 à 800 pas/période la retrouve.
+    RK4 rk4;
+    const OdeFunction rhs = p.rhs();
+    State y = y0;
+    const double tEnd = 1.37 * T, dt = T / 800.0;
+    double t = 0.0;
+    while (t < tEnd - 1e-12) t += advance(rk4, rhs, t, y, std::min(dt, tEnd - t));
+    const double c = std::cos(omega * t), sn = std::sin(omega * t);
+    State exact = y0;
+    for (int block = 0; block < 2; ++block) {  // bloc 0 : positions, bloc 1 : vitesses
+        for (int body = 0; body < 3; ++body) {
+            const int k = 9 * block + 3 * body;
+            exact[k] = c * y0[k] - sn * y0[k + 1];
+            exact[k + 1] = sn * y0[k] + c * y0[k + 1];
+        }
+    }
+    CHECK(p.distance(y, exact) < 1e-8);  // mesuré : 1,4e-9 à 800 pas/période
+
+    // Ordre 4 : doubler le nombre de pas divise l'erreur par 16 (mesuré 16,6 entre 800 et 1600 pas par période).
+    auto rotationError = [&](int perPeriod) {
+        RK4 solver;
+        State z = y0;
+        const double end = 1.37 * T, h = T / perPeriod;
+        double time = 0.0;
+        while (time < end - 1e-12) time += advance(solver, rhs, time, z, std::min(h, end - time));
+        const double cc = std::cos(omega * time), ss = std::sin(omega * time);
+        State ex = y0;
+        for (int block = 0; block < 2; ++block)
+            for (int body = 0; body < 3; ++body) {
+                const int k = 9 * block + 3 * body;
+                ex[k] = cc * y0[k] - ss * y0[k + 1];
+                ex[k + 1] = ss * y0[k] + cc * y0[k + 1];
+            }
+        return p.distance(z, ex);
+    };
+    CHECK_NEAR(rotationError(800) / rotationError(1600), 16.0, 2.0);
+}
+
+void testTwoBodyMatchesKepler() {
+    const double m1 = 1.0, m2 = 0.3, a = 1.7, e = 0.6, G = 2.0;
+    const NBodyProblem p = NBodyProblem::twoBody(m1, m2, a, e, G);
+    KeplerProblem k;
+    k.mu = G * (m1 + m2);
+    k.a = a;
+    k.e = e;
+    const double reduced = m1 * m2 / (m1 + m2);
+
+    const State y0 = p.initialState();
+    CHECK(p.count() == 2);
+    CHECK_NEAR(p.centerOfMass(y0).norm(), 0.0, 1e-14);
+    CHECK_NEAR(p.momentum(y0).norm(), 0.0, 1e-14);
+    // L et E du système = masse réduite x grandeurs par unité de masse du problème de Kepler
+    CHECK_NEAR(p.energy(y0), reduced * k.exactEnergy(), 1e-13);
+    CHECK_NEAR(p.angularMomentum(y0).z, reduced * k.exactAngularMomentum(), 1e-13);
+
+    // Le mouvement relatif r2 - r1 suit la solution exacte de Kepler de GM = G (m1 + m2) ; le centre de masse reste au repos.
+    RK45 rk;
+    rk.relTol = 1e-12;
+    rk.absTol = 1e-14;
+    State y = y0;
+    const OdeFunction rhs = p.rhs();
+    double t = 0.0;
+    const double tEnd = 1.3 * k.period();
+    for (double target : {0.4 * tEnd, 0.7 * tEnd, tEnd}) {
+        t += advance(rk, rhs, t, y, target - t);
+        const State rel = k.exact(t);
+        for (int c = 0; c < 3; ++c) {
+            CHECK_NEAR(y[3 + c] - y[c], rel[c], 1e-9);                // position relative (mesuré : 1,5e-11)
+            CHECK_NEAR(y[9 + c] - y[6 + c], rel[3 + c], 1e-9);        // vitesse relative
+        }
+        CHECK_NEAR(p.centerOfMass(y).norm(), 0.0, 1e-9);
+    }
+}
+
+void testFigureEight() {
+    const NBodyProblem p = NBodyProblem::figureEight();
+    CHECK(p.count() == 3);
+    CHECK(p.G == 1.0 && p.softening == 0.0);
+    const State y0 = p.initialState();
+    // Données de Simó : x1 = -x2, x3 = 0, v1 = v2 = -v3/2 ; P = 0, L = 0 par symétrie, E = -1,28714 (T = 1,2129 ; U = -2,5)
+    CHECK_NEAR(p.momentum(y0).norm(), 0.0, 1e-14);
+    CHECK_NEAR(p.angularMomentum(y0).norm(), 0.0, 1e-14);
+    CHECK_NEAR(p.centerOfMass(y0).norm(), 0.0, 1e-14);
+    CHECK_NEAR(p.potentialEnergy(y0), -2.5, 1e-7);   // |x1| = 1 (r12 = 2, r13 = r23 = 1)
+    CHECK_NEAR(p.energy(y0), -1.287142, 1e-6);
+
+    // Une période après, les trois corps sont revenus : même état à 1e-6 près (mesuré : 8e-8, limité par les 9 chiffres
+    // de Simó), et T = 6,32591398 est bien la période : à 1e-4 T d'écart, le retour est 20000 fois moins bon.
+    const State yT = p.reference(nbody::kFigureEightPeriod);
+    CHECK(p.distance(yT, y0) < 1e-6);
+    CHECK(p.distance(p.reference(1.0001 * nbody::kFigureEightPeriod), y0) > 1e-3);
+    // Chorégraphie : à T/3 les corps ont tourné d'un cran sur la même courbe, l'ensemble des positions est inchangé.
+    const State y3 = p.reference(nbody::kFigureEightPeriod / 3.0);
+    std::vector<bool> taken(3, false);
+    for (int i = 0; i < 3; ++i) {
+        int match = -1;
+        for (int j = 0; j < 3; ++j) {
+            const double d = std::hypot(y3[3 * i] - y0[3 * j], y3[3 * i + 1] - y0[3 * j + 1]);
+            if (d < 1e-5 && !taken[j]) match = j;
+        }
+        CHECK(match >= 0);
+        if (match >= 0) taken[match] = true;
+    }
+}
+
+// Ordres de convergence sur le huit (mêmes remarques que pour Kepler : Euler et RK4 se mesurent à 0,35 T, Verlet à 2,7 T).
+void testNBodyConvergence() {
+    const NBodyProblem p = NBodyProblem::figureEight();
+    const double T = nbody::kFigureEightPeriod;
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    auto ratio = [&](Solver& s, int n, double tEnd) { return nbodyError(p, s, n, tEnd) / nbodyError(p, s, 2 * n, tEnd); };
+    CHECK_NEAR(ratio(euler, 1600, 0.35 * T), 2.0, 0.15);        // ordre 1
+    CHECK_NEAR(ratio(symplectic, 800, 0.35 * T), 2.0, 0.15);    // ordre 1
+    CHECK_NEAR(ratio(verlet, 800, 2.7 * T), 4.0, 0.4);          // ordre 2
+    CHECK_NEAR(ratio(rk4, 400, 0.35 * T), 16.0, 1.5);           // ordre 4
+}
+
+// Ce que chaque schéma conserve sur un amas de 6 corps (t = 20) : l'impulsion par construction des forces opposées
+// (même pour Euler), le moment cinétique seulement pour les schémas à structure symplectique (la force est centrale).
+void testNBodyConservation() {
+    const NBodyProblem c = NBodyProblem::randomCluster(6, 42, 1.0, 0.05);
+    const OdeFunction f = c.rhs();
+    const int steps = 20000;
+    const double dt = 1e-3;
+
+    struct Result { double maxEnergy = 0.0, maxMomentum = 0.0, maxAngular = 0.0; };
+    auto run = [&](Solver& solver) {
+        Result r;
+        State y = c.initialState();
+        const double e0 = c.energy(y);
+        const Vec3 l0 = c.angularMomentum(y);
+        double t = 0.0;
+        for (int i = 0; i < steps; ++i) {
+            t += advance(solver, f, t, y, dt);
+            r.maxEnergy = std::max(r.maxEnergy, std::abs(c.energy(y) / e0 - 1.0));
+            r.maxMomentum = std::max(r.maxMomentum, c.momentum(y).norm());
+            r.maxAngular = std::max(r.maxAngular, (c.angularMomentum(y) - l0).norm());
+        }
+        return r;
+    };
+
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    const Result e = run(euler), s = run(symplectic), v = run(verlet), r = run(rk4);
+    for (const Result& x : {e, s, v, r}) CHECK(x.maxMomentum < 1e-13);  // impulsion : tous
+    CHECK(e.maxAngular > 1e-4);                                          // Euler dérive
+    CHECK(s.maxAngular < 1e-13 && v.maxAngular < 1e-13);                 // symplectiques : exact à l'arrondi
+    CHECK(r.maxAngular > 1e-12 && r.maxAngular < 1e-6);                  // RK4 : petit mais non nul (invariant quadratique)
+    // Énergie : Euler s'effondre (>10 %), les schémas d'ordre supérieur la gardent, dans l'ordre Euler symp. < Verlet < RK4.
+    CHECK(e.maxEnergy > 0.1);
+    CHECK(s.maxEnergy < 0.1 && s.maxEnergy > v.maxEnergy);
+    CHECK(v.maxEnergy < 5e-3 && v.maxEnergy > r.maxEnergy);
+    CHECK(r.maxEnergy < 1e-5);
+}
+
+// Chaos : un écart de 1e-9 sur un amas est amplifié exponentiellement ; sur le huit il ne croît que linéairement (stable).
+void testNBodyChaos() {
+    auto growth = [](const NBodyProblem& base) {
+        NBodyProblem twin = base;
+        twin.position[0].x += 1e-9;
+        RK45 a, b;
+        a.relTol = b.relTol = 1e-13;
+        a.absTol = b.absTol = 1e-15;
+        State ya = base.initialState(), yb = twin.initialState();
+        advance(a, base.rhs(), 0.0, ya, 2.0);
+        advance(b, twin.rhs(), 0.0, yb, 2.0);
+        const double early = base.distance(ya, yb);
+        advance(a, base.rhs(), 2.0, ya, 14.0);
+        advance(b, twin.rhs(), 2.0, yb, 14.0);
+        return base.distance(ya, yb) / early;  // amplification entre t = 2 et t = 16
+    };
+    CHECK(growth(NBodyProblem::figureEight()) < 30.0);                          // mesuré : 7,3 (croissance linéaire)
+    CHECK(growth(NBodyProblem::randomCluster(6, 42, 1.0, 0.05)) > 1e3);         // mesuré : 6,6e4
+}
+
 void testPeriapsisTracker() {
     // Solution exacte échantillonnée grossièrement (50 points par période, décalés pour ne pas tomber pile sur un
     // périastre) : exactement 5 périastres sur 5,3 périodes, tous à l'angle 0 (orbite fermée, pas de précession).
@@ -1025,6 +1313,14 @@ int main() {
     testKeplerEnergyAndPrecession();
     testKeplerPrecessionTheory();
     testKeplerAdaptiveStep();
+    testNBodyAccelerations();
+    testNBodyDiagnostics();
+    testLagrangeTriangle();
+    testTwoBodyMatchesKepler();
+    testFigureEight();
+    testNBodyConvergence();
+    testNBodyConservation();
+    testNBodyChaos();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");

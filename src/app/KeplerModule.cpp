@@ -292,7 +292,7 @@ void KeplerModule::computeConvergence() {
                 ++m;
             }
         }
-        c.slope = 0.0;
+        c.slope = std::numeric_limits<double>::quiet_NaN();  // hors du régime asymptotique
         if (m >= 2) {
             const double dm = static_cast<double>(m);
             c.slope = (dm * sxy - sx * sy) / (dm * sxx - sx * sx);
@@ -565,7 +565,8 @@ void KeplerModule::drawAnalysis(const UiContext& ctx) {
             for (int i = 0; i < SolverSet::kFixedStep; ++i) {
                 const Curve& c = convergence_[i];
                 if (!solvers_.show(i) || c.x.size() < 2) continue;
-                const std::string name = strf("%s (pente %.2f)", solvers_.solver(i).name(), c.slope);
+                const std::string name = std::isfinite(c.slope) ? strf("%s (pente %.2f)", solvers_.solver(i).name(), c.slope)
+                                                                 : strf("%s (hors régime)", solvers_.solver(i).name());
                 ImPlot::PlotLine(name.c_str(), c.x.data(), c.y.data(), static_cast<int>(c.x.size()), markerSpec(solvers_.color(i)));
             }
             ImPlot::EndPlot();

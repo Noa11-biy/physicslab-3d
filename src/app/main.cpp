@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--sim") == 0 && i + 1 < argc) {
             options.simulation = std::atoi(argv[++i]);
         } else {
-            std::fprintf(stderr, "Usage : %s [--level 1..6] [--sim 1..5] [--smoke-test]\n", argv[0]);
+            std::fprintf(stderr, "Usage : %s [--level 1..6] [--sim 1..6] [--smoke-test]\n", argv[0]);
             return std::strcmp(argv[i], "--help") == 0 ? 0 : 2;
         }
     }
