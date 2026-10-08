@@ -22,17 +22,32 @@ Chaque phénomène s'explique à **6 niveaux** : vulgarisation, intéressé, col
 
 Chaque simulation lourde a deux backends : un **CPU de référence en `double`** (validation) et un **GPU en `float`** (gros volumes). Le CPU vérifie que le GPU reste dans une tolérance définie.
 
+## Compilation
+
+Prérequis : compilateur C++17 (GCC via MSYS2 sous Windows), CMake ≥ 3.20, Ninja, pilote graphique OpenGL 4.5.
+
+```bash
+git clone --recurse-submodules https://github.com/Noa11-biy/physicslab-3d.git
+cd physicslab-3d
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure   # tests de validation
+./build/physicslab                           # lance l'application
+```
+
+Si le dépôt a été cloné sans `--recurse-submodules` : `git submodule update --init --recursive`.
+
 ## Structure du dépôt
 
 ```
-include/      en-têtes (.hpp), un sous-dossier par module
-src/          sources (.cpp), un sous-dossier par module
-shaders/      *.comp, *.vert, *.frag
-tests/        validations (invariants, solutions analytiques, écart CPU/GPU)
-third_party/  dépendances externes (GLFW, GLAD, ImGui, ImPlot)
+include/physicslab/   en-têtes publics : core/ (maths, solveurs, monde), render/ (OpenGL)
+src/                  sources : core/, render/, app/ (fenêtre et interface)
+shaders/              *.comp, *.vert, *.frag
+tests/                validations (invariants, solutions analytiques, écart CPU/GPU)
+third_party/          GLFW 3.4, ImGui 1.92 (docking), ImPlot 1.0 en sous-modules ; GLAD généré (GL 4.5 core)
 docs/
-  cours/      cours compilés par module (PDF / Word)
-  devlog/     journal de développement par module
+  cours/              cours compilés par module (PDF / Word)
+  devlog/             journal de développement par module
 ```
 
 ## Feuille de route
@@ -40,6 +55,14 @@ docs/
 Ordre de progression (cocher au fil des modules) :
 
 - [ ] Mécanique
+  - [x] M0 : socle (CMake, fenêtre, ImGui docking, maths, interface Solver, sélecteur de niveau)
+  - [ ] M1 : chute libre et projectile, comparaison Euler / Verlet / RK4 / RK45
+  - [ ] M2 : ressort-masse (libre, amorti, forcé)
+  - [ ] M3 : pendule simple puis double
+  - [ ] M4 : gravitation, Kepler, N-corps
+  - [ ] M5 : collisions et frottements
+  - [ ] M6 : corps rigide
+  - [ ] M7 : N-corps GPU (compute shader)
 - [ ] Ondes (acoustique, optique)
 - [ ] Thermodynamique
 - [ ] Électrodynamique
