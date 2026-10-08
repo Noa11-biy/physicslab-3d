@@ -1,7 +1,7 @@
 # Passation : PhysicsLab 3D
 
 Ce fichier permet de reprendre le projet dans une nouvelle conversation sans rien perdre. À lire en entier avant de coder.
-Dernière mise à jour : fin de M5b (Mécanique : M0 à M4, frottement sec, chocs et rebonds terminés), branche `module/mecanique`.
+Dernière mise à jour : fin de M5b (Mécanique : M0 à M4, frottement sec, chocs et rebonds terminés), branche `module/mecanique`. Prochaine étape : M5c (la feuille de route est rédigée en section 6, l'utilisateur ne l'a pas encore validée).
 
 ## 1. Rôle et règles de travail
 
@@ -210,19 +210,43 @@ niveaux 1, 3, 5 et 6 d'un nouveau module, et un ancien module pour la non-régre
 Options de l'application : `--level 1..6`, `--sim 1..8` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
 6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
 
-## 6. Suite proposée : M5c berceau de Newton
+## 6. Suite : M5c berceau de Newton (feuille de route présentée le 2026-10-08, en attente du « oui » de l'utilisateur)
 
-M5a (frottement sec) et M5b (chocs et rebonds) sont faits : voir « Résultats mesurés », `Friction.hpp`, `Collision.hpp`, `Bounce.hpp`. Feuille de route de M5c à présenter
-d'abord (règle du domaine) ; pistes :
-1. **Plusieurs billes alignées** (berceau de Newton, N = 5 billes en contact) : le cas piégeux est celui des chocs SIMULTANÉS (billes qui se touchent). Deux modèles à
-   comparer : (a) impulsions séquentielles (un choc à la fois, l'ordre de résolution change le résultat) : la solution « une bille entre, une sort » n'apparaît que pour
-   e = 1 et un ordre précis ; (b) contact continu de Hertz F = k δ^(3/2) (δ interpénétration) : l'onde de compression traverse les billes et la solution physique « une
-   entre, une sort » en sort naturellement (les billes sont des ressorts non linéaires). Difficulté numérique : raideur, pas très petit, plusieurs événements par pas
-   (limite de `advanceToEvent` : un seul changement de signe détecté par pas, voir `Events.hpp`).
-2. **Dissipation** dans le contact de Hertz (amortissement), comparaison aux coefficients de restitution mesurés. Énergie, impulsion, vitesse de l'onde.
-3. Réutiliser : `advanceToEvent` (contact), `TwoBallRun`/`collideSpheres` (impulsions), `Solver`/`RK45` avec `maxSteps` (un contact raide peut faire s'effondrer RK45),
-   `SolverSet`, `StepClock`, `drawResultTable` (≤ 3 colonnes numériques par tableau), `wrapped`. Préparer M6 (corps rigide : chocs avec rotation, cône de Coulomb,
-   paradoxe de Painlevé) et M7 (GPU).
+À re-présenter brièvement au début de la prochaine conversation (règle du domaine), puis commencer par l'étape 1 si l'utilisateur valide.
+
+**Le problème.** Avec 3 billes au contact, la conservation de l'impulsion et de l'énergie ne suffit pas à déterminer le résultat (vérifié à la main) :
+une bille de vitesse v frappe deux billes au repos ; les vitesses finales vérifient Σv = v et Σv² = v², soit v1 v2 + v1 v3 + v2 v3 = 0. En posant v1 = −x
+(0 ≤ x ≤ 1/3 pour que v2, v3 soient réelles, avec v1 ≤ v2 ≤ v3), v2 et v3 sont les racines de t² − (1+x) t + x (1+x) = 0 : par exemple x = 0,1 donne
+(−0,1 ; 0,111 ; 0,989) v. C'est une FAMILLE de solutions (un cercle dans l'espace des vitesses, tronqué par l'ordre), dont « une entre, une sort » (x = 0 :
+(0, 0, v)) n'est qu'un point. Seule la dynamique du contact tranche. À tester par le calcul avant de l'écrire dans l'interface.
+
+**Deux modèles à comparer.**
+1. *Impulsions séquentielles* (le modèle de M5b, `collideSpheres`) : un choc à la fois. Avec e = 1 et l'ordre de propagation gauche → droite on obtient « une entre,
+   une sort » ; un autre ordre ou e < 1 change le résultat (faiblesse du modèle, pas de la physique).
+2. *Contact de Hertz* F = k δ^(3/2) (δ = interpénétration, nulle si les billes ne se touchent pas) : les billes sont des ressorts non linéaires, une onde de
+   compression traverse la chaîne ; le résultat sort de la dynamique. Attendu : proche de « une entre, une sort » avec de petites vitesses résiduelles sur les
+   autres billes : À MESURER, ne pas l'affirmer. Amortissement optionnel (désactivé par défaut).
+
+**Références exactes** (deux billes identiques, vitesse d'approche v, μ = m/2) : énergie ½ μ v² = (2/5) k δ_max^(5/2), donc δ_max = (5 μ v² / (4 k))^(2/5) ;
+durée du contact T = 2,943 δ_max / v, où 2,943 = (4/5) Γ(2/5) Γ(1/2) / Γ(9/10) (calculé : 2,9433, valeur classique 2,9432) ; sortie élastique = échange des vitesses.
+La chaîne de N billes n'a pas de solution fermée : référence = RK45 serré, avec P et E conservées (E = énergie cinétique + Σ (2/5) k δ^(5/2)).
+
+**Difficultés numériques.**
+- Raideur : la durée du contact est très courte devant le mouvement, le pas est limité par la fréquence du contact (choisir des unités normalisées raisonnables).
+- Régularité : la force de Hertz est continue mais non lisse en δ = 0 (dérivée en δ^(1/2)) ; mesurer l'ordre effectif des solveurs (ne pas le prédire).
+- Plusieurs contacts à la fois, sans événement à localiser (force continue) : c'est ce qui contourne la limite de `advanceToEvent` (un seul changement de signe par pas).
+- RK45 : toujours avec `advance(..., maxSteps)`.
+
+**Simulations (`--sim 9`).** Choc de deux billes (comparaison à δ_max et T exacts) ; chaîne de 3 à 7 billes, nombre de billes lancées réglable ; modèle au choix
+(impulsions avec l'ordre de résolution, ou Hertz avec amortissement optionnel) ; au niveau 5, pour N = 3, graphe de l'ensemble des solutions (P et E conservées) avec
+le résultat de chaque modèle placé dessus (point pédagogique central) ; niveaux 1-6, tableaux de 3 colonnes numériques au plus.
+
+**Plan.** (1) Cœur et tests d'abord : force de Hertz, références exactes de 2 billes, chaîne, impulsions séquentielles, invariants. (2) Interface. (3) Commit, push, passation.
+**Choix par défaut :** chaîne horizontale idéale sur rail (sans pendule), billes identiques en unités normalisées, amortissement désactivé. Bonus seulement si tout le
+reste est fini : billes suspendues (force de rappel g/L) et contact linéaire « ressort » pour comparaison.
+
+**À réutiliser :** `advanceToEvent`, `collideSpheres` / `TwoBallRun` (impulsions), `Solver` / `RK45` avec `maxSteps`, `SolverSet`, `StepClock`, `drawResultTable` (≤ 3 colonnes
+numériques par tableau), `wrapped`, `Events.hpp`. Préparer M6 (corps rigide : chocs avec rotation, cône de Coulomb, paradoxe de Painlevé) et M7 (GPU).
 
 ## 7. Dette technique et idées
 
@@ -245,5 +269,5 @@ d'abord (règle du domaine) ; pistes :
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges),
 > puis `README.md`. Vérifie que ça compile et que les tests passent (section 5), puis présente-moi la feuille de route courte du
-> module M5c (berceau de Newton : impulsions séquentielles contre contact de Hertz ; M5a frottement sec et M5b chocs et rebonds sont faits) avant de coder.
+> module M5c (berceau de Newton : impulsions séquentielles contre contact de Hertz ; M5a frottement sec et M5b chocs et rebonds sont faits ; la section 6 en donne le brouillon) avant de coder.
 > Réponses courtes pendant le module, en français.
