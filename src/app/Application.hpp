@@ -8,7 +8,8 @@ struct AppOptions {
     bool smokeTest = false;
     // Niveau pédagogique au démarrage (1 à 6).
     int level = 3;
-    // Simulation affichée au démarrage (1 = M1 projectile, 2 = M2 ressort-masse, 3 = M3 pendule simple, 4 = M3b pendule double).
+    // Simulation affichée au démarrage (1 = M1 projectile, 2 = M2 ressort-masse, 3 = M3 pendule simple, 4 = M3b pendule double,
+    // 5 = M4a orbite de Kepler).
     int simulation = 1;
 };
 

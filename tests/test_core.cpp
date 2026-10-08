@@ -12,6 +12,7 @@
 #include "physicslab/core/Vec3.hpp"
 #include "physicslab/core/World.hpp"
 #include "physicslab/mechanics/DoublePendulum.hpp"
+#include "physicslab/mechanics/Kepler.hpp"
 #include "physicslab/mechanics/Oscillator.hpp"
 #include "physicslab/mechanics/Pendulum.hpp"
 #include "physicslab/mechanics/Projectile.hpp"
@@ -707,6 +708,293 @@ void testLyapunovFit() {
     CHECK(used == 0);
 }
 
+// --- M4 : gravitation, Kepler à 2 corps ------------------------------------------------
+
+void testKeplerEquation() {
+    const double pi = constants::pi;
+    // M = E - e sin E sur plusieurs tours (M va de -14,8 à +14,8 rad), jusqu'aux orbites très excentriques.
+    for (double e : {0.0, 0.3, 0.9, 0.99, 0.999}) {
+        for (int i = -40; i <= 40; ++i) {
+            const double M = 0.37 * i;
+            int iterations = 0;
+            const double E = kepler::solveEccentricAnomaly(M, e, &iterations);
+            CHECK_NEAR(E - e * std::sin(E), M, 1e-13);
+            CHECK(iterations <= 12);
+        }
+    }
+    CHECK_NEAR(kepler::solveEccentricAnomaly(0.0, 0.9), 0.0, 1e-15);  // périastre
+    CHECK_NEAR(kepler::solveEccentricAnomaly(pi, 0.9), pi, 1e-14);    // apoastre
+    CHECK_NEAR(kepler::solveEccentricAnomaly(1.234, 0.0), 1.234, 1e-15);  // cercle : E = M
+}
+
+void testKeplerExact() {
+    const double pi = constants::pi;
+    for (double e : {0.0, 0.5, 0.9}) {
+        KeplerProblem p;
+        p.mu = 1.7;
+        p.a = 2.5;
+        p.e = e;
+        const double T = p.period();
+        // 3e loi de Kepler : T^2 mu / a^3 = 4 pi^2
+        CHECK_NEAR(T * T * p.mu / (p.a * p.a * p.a), 4.0 * pi * pi, 1e-10);
+
+        // Périastre au départ : r = a (1 - e), vitesse de vis-viva.
+        const State s0 = p.initialState();
+        CHECK_NEAR(s0[0], p.a * (1.0 - e), 1e-14);
+        CHECK_NEAR(s0[1], 0.0, 1e-14);
+        CHECK_NEAR(s0[4], std::sqrt(p.mu * (1.0 + e) / (p.a * (1.0 - e))), 1e-13);
+        CHECK(p.distance(p.exact(0.0), s0) < 1e-14);
+
+        // Apoastre à T/2 : r = a (1 + e), vitesse opposée, plus lente.
+        const State sa = p.exact(0.5 * T);
+        CHECK_NEAR(sa[0], -p.a * (1.0 + e), 1e-12);
+        CHECK_NEAR(sa[1], 0.0, 1e-12);
+        CHECK_NEAR(sa[4], -std::sqrt(p.mu * (1.0 - e) / (p.a * (1.0 + e))), 1e-12);
+
+        // Périodicité : après une période on retrouve l'état initial.
+        CHECK(p.distance(p.exact(T), s0) < 1e-12);
+        CHECK(p.distance(p.exact(7.0 * T), s0) < 1e-11);
+
+        // L'état exact vérifie bien l'EDO r'' = -mu r/|r|^3 (différences finies centrées).
+        const OdeFunction f = p.rhs();
+        const double h = 1e-4;
+        for (double t : {0.2 * T, 0.45 * T, 0.8 * T}) {
+            const State yp = p.exact(t + h), ym = p.exact(t - h), y = p.exact(t);
+            State d(6);
+            f(t, y, d);
+            for (int k = 0; k < 3; ++k) {
+                CHECK_NEAR((yp[k] - ym[k]) / (2.0 * h), y[3 + k], 1e-6);       // x' = v
+                CHECK_NEAR((yp[3 + k] - ym[3 + k]) / (2.0 * h), d[3 + k], 1e-6);  // v' = a(rhs)
+                CHECK_NEAR(d[k], y[3 + k], 1e-15);  // la 1re moitié de rhs est la vitesse
+            }
+            // Accélération attractive, de module mu/r^2
+            const double r = std::sqrt(y[0] * y[0] + y[1] * y[1]);
+            CHECK_NEAR(std::sqrt(d[3] * d[3] + d[4] * d[4]), p.mu / (r * r), 1e-13);
+            CHECK(d[3] * y[0] + d[4] * y[1] < 0.0);
+        }
+
+        // Invariants le long de la solution exacte : E, |L| et le vecteur de Runge-Lenz (|A| = mu e, vers le périastre).
+        for (double t : {0.0, 0.13 * T, 0.5 * T, 0.77 * T, 3.3 * T}) {
+            const State y = p.exact(t);
+            CHECK_NEAR(p.energy(y), -p.mu / (2.0 * p.a), 1e-12);
+            const Vec3 L = p.angularMomentum(y);
+            CHECK_NEAR(L.z, std::sqrt(p.mu * p.a * (1.0 - e * e)), 1e-12);
+            CHECK_NEAR(L.x, 0.0, 1e-13);
+            CHECK_NEAR(L.y, 0.0, 1e-13);
+            CHECK_NEAR(p.exactAngularMomentum(), L.z, 1e-12);
+            const Vec3 A = p.rungeLenz(y);
+            CHECK_NEAR(A.x, p.mu * e, 1e-12);
+            CHECK_NEAR(A.y, 0.0, 1e-12);
+            CHECK_NEAR(A.z, 0.0, 1e-13);
+        }
+        CHECK_NEAR(p.exactEnergy(), p.energy(s0), 1e-13);
+        if (e > 0.0) CHECK_NEAR(p.periapsisAngle(p.exact(0.31 * T)), 0.0, 1e-12);
+    }
+}
+
+// Ordres de convergence sur l'orbite, mesurés à un instant qui n'est pas un multiple de la période (voir PASSATION).
+void testKeplerConvergence() {
+    KeplerProblem p;
+    p.e = 0.5;
+    const double T = p.period();
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    auto ratio = [&](Solver& s, int n, double tEnd) { return keplerError(p, s, n, tEnd) / keplerError(p, s, 2 * n, tEnd); };
+    // Euler est encore pré-asymptotique à 2,7 T (rapport 1,76 à 25600 pas : l'erreur de phase croît trop vite) :
+    // on le mesure plus tôt, à 0,35 T. Les autres schémas sont asymptotiques à 2,7 T avec ces nombres de pas.
+    CHECK_NEAR(ratio(euler, 800, 0.35 * T), 2.0, 0.15);        // ordre 1
+    CHECK_NEAR(ratio(symplectic, 25600, 2.7 * T), 2.0, 0.15);  // ordre 1
+    CHECK_NEAR(ratio(verlet, 800, 2.7 * T), 4.0, 0.4);         // ordre 2
+    CHECK_NEAR(ratio(rk4, 3200, 2.7 * T), 16.0, 2.0);          // ordre 4
+
+    RK45 rk45;
+    rk45.relTol = 1e-10;
+    rk45.absTol = 1e-12;
+    CHECK(keplerError(p, rk45, 200, 2.7 * T) < 1e-7);
+}
+
+// Intègre `periods` orbites à pas fixe T/perPeriod et mesure ce qui se conserve (ou non).
+struct KeplerRun {
+    double maxFirst = 0.0, maxLast = 0.0;  // |E/E0 - 1| maximal sur les 10 premières / 10 dernières orbites
+    double lzDrift = 0.0;                  // |Lz/Lz0 - 1| maximal
+    double energyEnd = 0.0;                // énergie finale
+    double precession = 0.0;               // précession moyenne par orbite [rad]
+};
+
+KeplerRun runKepler(const KeplerProblem& p, Solver& solver, int perPeriod, int periods) {
+    KeplerRun run;
+    State y = p.initialState();
+    const OdeFunction f = p.rhs();
+    const double dt = p.period() / perPeriod, e0 = p.energy(y), lz0 = p.angularMomentum(y).z;
+    PeriapsisTracker tracker;
+    double t = 0.0;
+    for (int i = 1; i <= perPeriod * periods; ++i) {
+        t += advance(solver, f, t, y, dt);
+        tracker.update(t, y);
+        const double rel = std::abs(p.energy(y) / e0 - 1.0);
+        if (i <= 10 * perPeriod) run.maxFirst = std::max(run.maxFirst, rel);
+        if (i > (periods - 10) * perPeriod) run.maxLast = std::max(run.maxLast, rel);
+        run.lzDrift = std::max(run.lzDrift, std::abs(p.angularMomentum(y).z / lz0 - 1.0));
+    }
+    run.energyEnd = p.energy(y);
+    run.precession = tracker.precessionPerOrbit();
+    return run;
+}
+
+void testKeplerEnergyAndPrecession() {
+    KeplerProblem p;
+    p.e = 0.5;
+    const double e0 = p.exactEnergy();
+    const int perPeriod = 200, periods = 100;
+
+    // Euler explicite : l'orbite spirale vers l'extérieur. L'énergie et le moment cinétique augmentent à chaque tour.
+    {
+        ExplicitEuler euler;
+        State y = p.initialState();
+        const OdeFunction f = p.rhs();
+        const double dt = p.period() / 1000.0;
+        double t = 0.0, previousE = e0, previousL = p.exactAngularMomentum();
+        for (int orbit = 1; orbit <= 10; ++orbit) {
+            for (int i = 0; i < 1000; ++i) t += advance(euler, f, t, y, dt);
+            CHECK(p.energy(y) > previousE);
+            CHECK(p.angularMomentum(y).z > previousL);
+            previousE = p.energy(y);
+            previousL = p.angularMomentum(y).z;
+        }
+        CHECK(-p.mu / (2.0 * previousE) > 2.0 * p.a);  // le demi-grand axe a plus que doublé en 10 tours
+    }
+    {   // et à 200 pas par période l'astre finit par s'échapper (E > 0 : orbite ouverte)
+        ExplicitEuler euler;
+        CHECK(runKepler(p, euler, perPeriod, periods).energyEnd > 0.0);
+    }
+
+    // Euler symplectique et Verlet : énergie bornée sans dérive, moment cinétique conservé à l'arrondi (symétrie de
+    // la force centrale), mais précession rétrograde en dt^2 que la théorie du hamiltonien modifié prédit.
+    const double dt = p.period() / perPeriod;
+    const double predicted = p.verletPrecessionPerOrbit(dt);
+    CHECK(predicted < 0.0);
+    {
+        SymplecticEuler symplectic;
+        const KeplerRun r = runKepler(p, symplectic, perPeriod, periods);
+        CHECK(r.maxLast < 1.05 * r.maxFirst);
+        CHECK(r.maxFirst < 0.1);
+        CHECK(r.lzDrift < 1e-9);
+        CHECK_NEAR(r.precession / predicted, 1.0, 0.02);
+    }
+    {
+        VelocityVerlet verlet;
+        const KeplerRun r = runKepler(p, verlet, perPeriod, periods);
+        CHECK(r.maxLast < 1.05 * r.maxFirst);
+        CHECK(r.maxFirst < 0.01);
+        CHECK(r.lzDrift < 1e-9);
+        CHECK_NEAR(r.precession / predicted, 1.0, 0.02);
+
+        // En dt^2 : pas divisé par 2 => précession divisée par 4 ; pas divisé par 4 => par 16.
+        VelocityVerlet coarse, fine;
+        const double p100 = runKepler(p, coarse, 100, 60).precession, p400 = runKepler(p, fine, 400, 60).precession;
+        CHECK_NEAR(p100 / p400, 16.0, 1.0);
+    }
+
+    // RK4 : précession ~ 1000 fois plus faible, mais l'énergie dérive lentement (dissipation) au lieu de rester bornée.
+    {
+        RK4 rk4;
+        const KeplerRun r = runKepler(p, rk4, perPeriod, periods);
+        CHECK(r.energyEnd < e0);                    // E devient plus négative : l'orbite se resserre
+        CHECK(r.maxLast > 2.0 * r.maxFirst);        // la dérive grandit
+        CHECK(std::abs(r.precession) < 0.01 * std::abs(predicted));
+    }
+}
+
+// La formule de précession du hamiltonien modifié est valable pour toute excentricité (mesuré : écart <= 0,2 %
+// de e = 0,1 à 0,9) et indépendante des unités (seul compte le nombre de pas par période).
+void testKeplerPrecessionTheory() {
+    struct Case { double e, a, mu; int perPeriod; };
+    for (const Case& c : {Case{0.1, 1.0, 1.0, 200}, Case{0.2, 1.0, 1.0, 200}, Case{0.7, 1.0, 1.0, 800},
+                          Case{0.9, 1.0, 1.0, 3200}, Case{0.5, 3.7, 2.3, 400}}) {
+        KeplerProblem p;
+        p.e = c.e; p.a = c.a; p.mu = c.mu;
+        VelocityVerlet verlet;
+        const KeplerRun r = runKepler(p, verlet, c.perPeriod, 40);
+        CHECK_NEAR(r.precession / p.verletPrecessionPerOrbit(p.period() / c.perPeriod), 1.0, 0.01);
+    }
+}
+
+// Forte excentricité : les pas fixes ne résolvent pas le périastre, le pas adaptatif si.
+void testKeplerAdaptiveStep() {
+    KeplerProblem p;
+    p.e = 0.9;
+    const double T = p.period();
+
+    // RK4 à 200 pas par période : la vitesse au périastre est 4,4 fois la vitesse circulaire, le pas est trop grand.
+    RK4 rk4;
+    CHECK(runKepler(p, rk4, 200, 2).maxFirst > 0.1);
+
+    // RK45 : on observe lui-même ses pas. Au périastre (r = 0,1) ils sont ~ 300 fois plus courts qu'à l'apoastre (r = 1,9).
+    RK45 rk45;
+    rk45.relTol = 1e-10;
+    rk45.absTol = 1e-12;
+    State y = p.initialState();
+    const OdeFunction f = p.rhs();
+    double t = 0.0, hPeri = 1e9, hApo = 0.0;
+    const double tEnd = 2.0 * T, hMax = T / 10.0;
+    int steps = 0;
+    while (t < tEnd - 1e-14) {
+        const double r = std::sqrt(y[0] * y[0] + y[1] * y[1]);
+        const double h = rk45.step(f, t, y, std::min(hMax, tEnd - t));
+        t += h;
+        ++steps;
+        if (r < 0.15) hPeri = std::min(hPeri, h);
+        if (r > 1.7) hApo = std::max(hApo, h);
+    }
+    CHECK(hPeri < 0.02 * hApo);
+    CHECK(steps < 1500);
+    CHECK(p.distance(y, p.exact(t)) < 1e-5);
+}
+
+void testPeriapsisTracker() {
+    // Solution exacte échantillonnée grossièrement (50 points par période, décalés pour ne pas tomber pile sur un
+    // périastre) : exactement 5 périastres sur 5,3 périodes, tous à l'angle 0 (orbite fermée, pas de précession).
+    KeplerProblem p;
+    p.e = 0.5;
+    const double T = p.period();
+    PeriapsisTracker tracker;
+    CHECK(std::isnan(tracker.precessionPerOrbit()));
+    int detections = 0;
+    for (int i = 0; i < 265; ++i) {
+        const double t = (i + 0.3) * T / 50.0;
+        if (tracker.update(t, p.exact(t))) ++detections;
+    }
+    CHECK(detections == 5);
+    CHECK(tracker.count() == 5);
+    CHECK_NEAR(tracker.precession(), 0.0, 1e-6);
+    CHECK_NEAR(tracker.precessionPerOrbit(), 0.0, 1e-6);
+
+    // Une orbite qui tourne de delta par tour : on fait tourner l'état exact de k*delta à chaque période.
+    // La précession mesurée doit valoir delta par orbite, y compris au-delà de pi (angle déroulé).
+    const double delta = 0.9;
+    PeriapsisTracker turning;
+    for (int i = 0; i < 400; ++i) {
+        const double t = (i + 0.3) * T / 50.0;
+        State y = p.exact(t);
+        const double rot = delta * t / T;  // rotation progressive du plan de l'orbite
+        const double c = std::cos(rot), s = std::sin(rot);
+        State z = y;
+        z[0] = c * y[0] - s * y[1]; z[1] = s * y[0] + c * y[1];
+        // vitesse vraie = vitesse tournée + vitesse d'entraînement (omega x r), avec omega = delta / T
+        const double w = delta / T;
+        z[3] = c * y[3] - s * y[4] - w * z[1]; z[4] = s * y[3] + c * y[4] + w * z[0];
+        turning.update(t, z);
+    }
+    CHECK(turning.count() == 7);
+    CHECK_NEAR(turning.precessionPerOrbit(), delta, 1e-5);
+    CHECK(turning.precession() > constants::pi);  // 6 orbites * 0.9 = 5,4 rad : l'angle n'est pas replié dans (-pi, pi]
+
+    turning.reset();
+    CHECK(turning.count() == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -730,6 +1018,13 @@ int main() {
     testDoublePendulumNumerics();
     testChaosVersusRegular();
     testLyapunovFit();
+    testKeplerEquation();
+    testKeplerExact();
+    testPeriapsisTracker();
+    testKeplerConvergence();
+    testKeplerEnergyAndPrecession();
+    testKeplerPrecessionTheory();
+    testKeplerAdaptiveStep();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");
