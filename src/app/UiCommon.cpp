@@ -15,6 +15,12 @@ std::string strf(const char* format, ...) {
     return buffer;
 }
 
+void wrapped(const std::string& text, bool dim) {
+    if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", text.c_str());
+    if (dim) ImGui::PopStyleColor();
+}
+
 void drawResultTable(const char* id, const std::vector<std::string>& headers, const std::vector<TableRow>& rows) {
     const int columns = 1 + static_cast<int>(headers.size());
     if (!ImGui::BeginTable(id, columns, ImGuiTableFlags_RowBg)) return;

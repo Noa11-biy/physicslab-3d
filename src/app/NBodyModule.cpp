@@ -36,12 +36,6 @@ bool isFinite(const State& y) {
     return true;
 }
 
-void wrapped(const std::string& text, bool dim = false) {
-    if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("%s", text.c_str());
-    if (dim) ImGui::PopStyleColor();
-}
-
 }  // namespace
 
 NBodyModule::NBodyModule() {

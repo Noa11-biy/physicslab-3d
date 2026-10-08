@@ -1,7 +1,7 @@
 # Passation : PhysicsLab 3D
 
 Ce fichier permet de reprendre le projet dans une nouvelle conversation sans rien perdre. À lire en entier avant de coder.
-Dernière mise à jour : fin de M4 (Mécanique : M0 à M4 terminés), branche `module/mecanique`.
+Dernière mise à jour : fin de M5a (Mécanique : M0 à M4 et frottement sec terminés), branche `module/mecanique`.
 
 ## 1. Rôle et règles de travail
 
@@ -43,7 +43,9 @@ Moléculaire, Information quantique, Particules, Géophysique, Météo, Biophysi
 | M2 | Ressort-masse libre / amorti / forcé, résonance, 3 régimes d'amortissement | fait |
 | M3 | Pendule simple (solution elliptique exacte) puis pendule double (chaos, Lyapunov) | fait |
 | M4 | Gravitation : M4a Kepler à 2 corps (précession numérique prédite), M4b N-corps CPU (huit, Lagrange, amas) | fait |
-| **M5** | **Collisions et frottements** | **à faire (suite logique)** |
+| M5a | Frottement sec de Coulomb sur plan incliné (événements, adhérence, 3 modèles numériques) | fait |
+| **M5b** | **Chocs et rebonds (restitution, balle rebondissante, billard)** | **à faire (suite logique)** |
+| M5c | Plusieurs corps : berceau de Newton (impulsions séquentielles contre contact de Hertz) | à faire |
 | M6 | Corps rigide (quaternions, toupie, solide libre) | à faire |
 | M7 | N-corps GPU en compute shader (écart CPU/GPU) | à faire |
 
@@ -80,13 +82,25 @@ module quand l'utilisateur le demande ou continue la chaîne (c'était son souha
   → 8,3e-11 (1600), ordre 4. Amas de 6 corps, dt = 1e-3, t = 20 : |P| ≤ 3e-15 pour TOUS les solveurs (forces opposées) ; |ΔL| : Euler 3,4e-3,
   symplectiques ≤ 4e-15 (exact à l'arrondi), RK4 9,8e-11 (invariant quadratique non conservé) ; max |dE/E| : Euler 0,475, sympl. 2,4e-2,
   Verlet 8,0e-4, RK4 1,8e-7. Deux corps : accord avec Kepler à 1,5e-11.
+- **Frottement sec (M5a)**, résistance k = 0,7 pour que la solution ne soit pas un polynôme : avec « événement + adhérence » on retrouve les ordres des
+  solveurs (rapports d'erreur au doublement des pas : Euler 2,0, Euler symplectique 2,0, Verlet 4,0, RK4 16,2) ; le modèle **naïf** (sgn dans l'EDO) fait
+  tomber Verlet à 2,0 et RK4 à 2,05 puis 1,94 (16,1 sur le même problème sans frottement sec) : l'ordre 1 pour tous. À n = 400 pas : erreur 6,7e-2
+  (naïf) contre 3,3e-10 (événement), soit 2e8 fois mieux. Erreurs finales de l'événement à dt = 0,05 : RK4 4e-8 à 9e-8, Verlet 1,4e-3, RK45 1e-10 ; sans
+  résistance Verlet et RK4 sont exacts à 2e-14 (phases polynomiales). Instant d'arrêt trouvé par bissection : 1e-6 (RK4), 1e-8 (RK45).
+  **Piège de l'adhérence** (μd < tan θ ≤ μs, bloc au repos) : exact = reste collé ; naïf RK4 = parti à −9,2 m en 5 s (le modèle ignore μs : erreur de modèle,
+  l'erreur ne tend pas vers 0 avec dt). Bloc qui doit rester collé après un arrêt (k = 0) : le naïf garde une vitesse résiduelle 1,18 |A| dt (∝ dt, jamais nulle).
+  Régularisation tanh(v/ε) : erreur de position à 5 s 0,017 / 0,085 / 0,35 m pour ε = 0,01 / 0,05 / 0,2, **indépendante de dt** (mesuré dt = 0,01 et 0,001) ;
+  le bloc qui doit rester collé rampe de −9,4 m en 5 s. **RK45 naïf sur un bloc qui doit rester collé : ne termine pas** (l'erreur locale reste d'ordre h sur
+  la surface v = 0, le pas descend jusqu'à hMin = 1e-14) ; `advance(..., maxSteps)` le rend borné (400 pas par pas de calcul dans l'interface, « bloqué »).
 
 ## 3. Architecture du code
 
 ```
 include/physicslab/
   core/        Vec3, Mat3, Quaternion, Constants (SI, CODATA 2022), Level, Solver, World
+  core/        ... + Events (advanceToEvent : instant exact où g(t, y) change de signe, bissection sur le pas ; brique pour tous les chocs)
   mechanics/   problèmes de référence avec solution exacte : Projectile, Oscillator, Pendulum, DoublePendulum, Kepler (+ PeriapsisTracker),
+               Friction (InclineProblem : solution exacte par morceaux ; InclineRun : événement + adhérence ; modèles Naive / Regularized),
                NBody (nbody::accelerations : interface « force sur chaque particule » découplée de l'intégrateur, reprise par le GPU en M7)
   render/      Camera (orbitale, float), Renderer (OpenGL 4.5 DSA : lignes et points colorés)
 src/core, src/mechanics, src/render   implémentations
@@ -141,6 +155,12 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
   seulement linéaire donne un faux λ (0,12 pour le huit, stable) : décider du chaos sur l'amplification réelle de l'écart (> 1000), pas sur λ.
   L'énergie des schémas d'ordre élevé ne reste pas « bornée » de façon lisse sur un amas (les rencontres rapprochées la font sauter) : comparer des maxima,
   ne pas exiger un plateau.
+- **Frottement sec / discontinuités** : un solveur adaptatif (RK45) peut ne jamais terminer : il accepte des pas jusqu'à 1e-14 quand l'erreur reste trop grande ;
+  toujours appeler `advance(..., maxSteps)` quand la dynamique peut être discontinue, et ne pas tester un RK45 sur le modèle naïf sans budget (un test peut se
+  figer). Un plateau d'erreur indépendant du pas n'est pas forcément un défaut du schéma : ici l'arrêt tombait au même décalage (0,18 ms) de la frontière
+  de pas pour tous les dt multiples de 0,0025 s (erreur de vitesse = ΔA × décalage). Choisir des cas dont l'arrêt n'est pas aligné sur la grille pour mesurer un
+  ordre. Sans résistance, les phases sont des polynômes de degré 2 : Verlet et RK4 exacts, rien à mesurer (ajouter k > 0). L'événement doit ignorer un
+  départ exactement sur la surface (g = 0) : sinon faux arrêt à chaque redémarrage.
 - **Interface** : la police Segoe UI n'a pas ∇ ni ∝ (affichés « � ») ; ∂, ᵀ, ω, √, ≈, Δ passent. Plus de 3 colonnes numériques dans « Invariants » (~400 px)
   écrasent la colonne « Méthode » : scinder en deux tableaux. `TextDisabled` ne passe pas à la ligne : utiliser `TextWrapped` colorée pour les notes.
 - **PowerShell 5.1** : `Get-Content -Raw | Set-Content -Encoding utf8` ré-encode les accents (mojibake) et ajoute un BOM. Éditer avec l'outil Edit, ou avec
@@ -164,36 +184,36 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
 ```bash
 cmake -S . -B build -G Ninja && cmake --build build           # aucun avertissement attendu (-Wall -Wextra -Wpedantic)
 ctest --test-dir build --output-on-failure                     # "test_core : OK"
-for s in 1 2 3 4 5 6; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
+for s in 1 2 3 4 5 6 7; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
 ```
 Build Debug propre depuis zéro de temps en temps (`-DCMAKE_BUILD_TYPE=Debug` dans un dossier jetable : vérifie les `assert`).
 Vérification visuelle (PowerShell) : `.\tools\screenshot.ps1 -Level 5 -Sim 4 -Wait 8` puis ouvrir le PNG indiqué. Regarder au moins les
 niveaux 1, 3, 5 et 6 d'un nouveau module, et un ancien module pour la non-régression. `-Clicks "x,y;x,y"` simule des clics.
 
-Options de l'application : `--level 1..6`, `--sim 1..6` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
-6 = M4b N corps), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
+Options de l'application : `--level 1..6`, `--sim 1..7` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
+6 = M4b N corps, 7 = M5a frottement sec), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
 
-## 6. Suite proposée : M5 collisions et frottements
+## 6. Suite proposée : M5b chocs et rebonds, puis M5c berceau de Newton
 
-Feuille de route à présenter d'abord (règle du domaine), puis (idées, à affiner) :
-1. **Frottement sec de Coulomb** sur plan incliné : seuil d'adhérence tan θ = μs, glissement uniformément accéléré a = g (sin θ − μd cos θ),
-   solution exacte. Difficulté numérique : le modèle est discontinu en v = 0 (broutement « stick-slip » des schémas naïfs) : prévoir un état
-   « adhérence » explicite. Comparer aux solveurs de M1 (RK45 doit détecter l'événement).
-2. **Collisions** : coefficient de restitution e (impulsion conservée, énergie perdue de 1 − e²), choc 1D élastique/inélastique avec solution
-   exacte, choc oblique 2D (billard). Balle rebondissante : hauteurs en e^(2n) h0, **durée totale finie** (suite géométrique, paradoxe de Zénon),
-   rebonds infinis en temps fini à traiter à part. Détection d'événement (instant exact du contact par bissection / RK45 « dense output »)
-   plutôt que test à chaque pas fixe (sinon : effet tunnel, énergie fausse).
-3. **Résolution par impulsions** de plusieurs corps (cône de friction de Coulomb), puis le berceau de Newton (cas piégeux : les chocs
-   successifs et simultanés). Prépare M6 (corps rigide) et M7 (GPU).
-4. Réutiliser : `Solver`/`RK45`, `SolverSet`, `StepClock`, `drawResultTable` (≤ 3 colonnes numériques par tableau), `PeriapsisTracker` n'est pas
-   générique. `World` n'a toujours que pesanteur uniforme + frottement linéaire (la gravitation a son propre `NBodyProblem`) : y ajouter les
-   contacts ou créer un `ContactWorld` séparé, à décider en feuille de route.
+M5a (frottement sec) est fait : voir « Résultats mesurés » et `Friction.hpp`. Feuille de route de M5b à présenter d'abord (règle du domaine), puis :
+1. **Chocs** : coefficient de restitution e (impulsion conservée, énergie perdue de ½(1 − e²) μ_r v_rel²), choc 1D élastique/inélastique avec solution
+   exacte, choc oblique 2D (billard : composante tangentielle conservée). Balle rebondissante : hauteurs en e^(2n) h0, **durée totale finie**
+   t₀ (1 + e)/(1 − e) (suite géométrique, paradoxe de Zénon) ; rebonds infinis en temps fini : seuil de vitesse minimale.
+2. **Détection d'événement déjà disponible** : `advanceToEvent` (core/Events.hpp) donne l'instant exact du contact par bissection sur le pas ; le modèle
+   « pas fixe + test y < 0 » ajoute une erreur d'ordre 1 sur l'énergie (à montrer, comme le naïf de M5a). Le pilote de M5a (`InclineRun`) est le modèle à imiter :
+   une machine à états autour d'EDO lisses, l'événement changeant de régime.
+3. **M5c** : plusieurs corps, impulsions séquentielles contre contact de Hertz F = k δ^(3/2) (le berceau de Newton, cas piégeux : chocs simultanés). Prépare
+   M6 (corps rigide) et M7 (GPU).
+4. Réutiliser : `Solver`/`RK45` (avec `maxSteps` si la dynamique est discontinue), `SolverSet`, `StepClock`, `drawResultTable` (≤ 3 colonnes numériques par
+   tableau), `wrapped` (UiCommon). `World` n'a toujours que pesanteur uniforme + frottement linéaire (la gravitation a `NBodyProblem`, le frottement
+   sec `InclineProblem`) : chaque phénomène garde son `…Problem`.
 
 ## 7. Dette technique et idées
 
-- `computeConvergence()` est dupliqué dans 6 modules (deux variantes : erreur à `tEnd` fixe, pente ajustée là où l'erreur < 0,1 pour M4) :
-  à factoriser (fonction générique prenant une fonction d'erreur). Idem `wrapped()` (texte enveloppé) dans KeplerModule et NBodyModule : à
-  mettre dans UiCommon.
+- `computeConvergence()` est dupliqué dans 7 modules (variantes : erreur à `tEnd` fixe ; pente ajustée là où l'erreur < 0,1 pour M4 ; tous les points pour M5a) :
+  à factoriser (fonction générique prenant une fonction d'erreur).
+- M5a : tableau des modèles d'orbite/chocs sans sélecteur de solveur par modèle (les 5 solveurs partagent le modèle choisi) ; le plan est dessiné en fil de fer,
+  une rampe pleine (triangles) donnerait une meilleure lecture. Frottement de roulement, frottement visqueux non linéaire (quadratique) : absents.
 - Euler explicite et symplectique restent mal comparés à pas égal (ordre 1 chacun mais constantes très différentes) ; le pas par particule ou adaptatif
   n'existe pas pour les N corps (rencontres rapprochées : l'énergie saute). À reprendre avec M7 (GPU float).
 - Orbites non liées (e ≥ 1, hyperboles) absentes de Kepler ; triangle de Lagrange à masses inégales (stable pour les Troyens) absent de NBody.
@@ -209,4 +229,5 @@ Feuille de route à présenter d'abord (règle du domaine), puis (idées, à aff
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges),
 > puis `README.md`. Vérifie que ça compile et que les tests passent (section 5), puis présente-moi la feuille de route courte du
-> module M5 (collisions et frottements) avant de coder. Réponses courtes pendant le module, en français.
+> module M5b (chocs et rebonds : restitution, balle rebondissante, billard ; M5a frottement sec est fait) avant de coder. Réponses courtes pendant le
+> module, en français.

@@ -6,12 +6,14 @@
 #include <vector>
 
 #include "physicslab/core/Constants.hpp"
+#include "physicslab/core/Events.hpp"
 #include "physicslab/core/Mat3.hpp"
 #include "physicslab/core/Quaternion.hpp"
 #include "physicslab/core/Solver.hpp"
 #include "physicslab/core/Vec3.hpp"
 #include "physicslab/core/World.hpp"
 #include "physicslab/mechanics/DoublePendulum.hpp"
+#include "physicslab/mechanics/Friction.hpp"
 #include "physicslab/mechanics/Kepler.hpp"
 #include "physicslab/mechanics/NBody.hpp"
 #include "physicslab/mechanics/Oscillator.hpp"
@@ -1241,6 +1243,370 @@ void testNBodyChaos() {
     CHECK(growth(NBodyProblem::randomCluster(6, 42, 1.0, 0.05)) > 1e3);         // mesuré : 6,6e4
 }
 
+// --- M5 : événements, frottement sec, chocs ----------------------------------------------
+
+void testEventDetection() {
+    // Chute libre y'' = -g depuis y = 1 m : l'événement « y = 0 » a lieu à t* = sqrt(2/g), bien avant la fin d'un pas de 1 s.
+    const double g = constants::g0;
+    const OdeFunction f = [g](double, const State& y, State& d) { d[0] = y[1]; d[1] = -g; };
+    const EventFunction ground = [](double, const State& y) { return y[0]; };
+    const double tStar = std::sqrt(2.0 / g);
+
+    RK4 rk4;
+    RK45 rk45;
+    for (Solver* solver : {static_cast<Solver*>(&rk4), static_cast<Solver*>(&rk45)}) {
+        State y{1.0, 0.0};
+        const EventStep r = advanceToEvent(*solver, f, ground, 0.0, y, 1.0);
+        CHECK(r.event);
+        CHECK_NEAR(r.elapsed, tStar, 1e-12);
+        CHECK_NEAR(y[0], 0.0, 1e-12);
+        CHECK_NEAR(y[1], -g * tStar, 1e-11);
+    }
+
+    // Pas sans événement : on avance de la durée demandée, comme advance().
+    State y{1.0, 0.0};
+    EventStep r = advanceToEvent(rk4, f, ground, 0.0, y, 0.2);
+    CHECK(!r.event);
+    CHECK_NEAR(r.elapsed, 0.2, 1e-15);
+    CHECK_NEAR(y[0], 1.0 - 0.5 * g * 0.04, 1e-13);
+
+    // Départ exactement sur la surface (g = 0) en s'en éloignant : ce n'est pas un événement.
+    State up{0.0, 1.0};
+    r = advanceToEvent(rk4, f, ground, 0.0, up, 0.1);
+    CHECK(!r.event);
+    CHECK_NEAR(r.elapsed, 0.1, 1e-15);
+
+    // Événement dépendant du temps : g(t, y) = t - 0.37 s'annule à t = 0.37, quel que soit l'état.
+    State any{0.0, 0.0};
+    r = advanceToEvent(rk4, f, [](double t, const State&) { return t - 0.37; }, 0.0, any, 1.0);
+    CHECK(r.event);
+    CHECK_NEAR(r.elapsed, 0.37, 1e-12);
+
+    // Deux événements dans un même pas (g change deux fois de signe) : non détectés, c'est une limite documentée du pas.
+    // On vérifie au moins que le comportement reste défini (pas d'événement, avance complète).
+    State twice{0.0, 0.0};
+    r = advanceToEvent(rk4, f, [](double t, const State&) { return (t - 0.2) * (t - 0.6); }, 0.0, twice, 1.0);
+    CHECK(r.elapsed > 0.0);
+}
+
+InclineProblem makeIncline(double angle, double muStatic, double muKinetic, double s0, double v0, double drag = 0.0) {
+    InclineProblem p;
+    p.angle = angle;
+    p.muStatic = muStatic;
+    p.muKinetic = muKinetic;
+    p.s0 = s0;
+    p.v0 = v0;
+    p.drag = drag;
+    return p;
+}
+
+// Budget de pas : un solveur adaptatif qui s'effondre sur une dynamique discontinue rend la main au lieu de boucler.
+void testAdvanceBudget() {
+    // Bloc qui doit rester collé (tan(theta) < mu_d), modèle naïf sgn(v) : après l'arrêt, la solution « glisse » le long de la
+    // surface v = 0, où l'erreur locale reste d'ordre h : RK45 réduit son pas sans fin (jusqu'à 1e-14) pour une tolérance 1e-8.
+    const InclineProblem p = makeIncline(0.2, 0.6, 0.5, 0.0, -3.0, 0.7);
+    const OdeFunction f = p.rhs(InclineModel::Naive);
+    RK45 rk;
+    rk.relTol = 1e-8;
+    rk.absTol = 1e-10;
+    State y = p.initialState();
+    double t = 0.0;
+    bool exhausted = false;
+    const double dt = 0.0125;
+    for (int i = 0; i < 400 && !exhausted; ++i) {
+        rk.resetStats();
+        const double elapsed = advance(rk, f, t, y, dt, 300);
+        CHECK(rk.acceptedSteps() <= 300);           // le budget est respecté
+        CHECK(elapsed > 0.0);                       // et du temps a bien été avancé
+        t += elapsed;
+        if (elapsed < dt * (1.0 - 1e-9)) exhausted = true;
+    }
+    CHECK(exhausted);                               // RK45 s'est bloqué
+    CHECK(t > p.firstStopTime());                   // après l'arrêt du bloc, pas avant
+
+    // Budget suffisant : même résultat que sans budget. Sans budget (défaut), comportement inchangé.
+    const OdeFunction decay = [](double, const State& s, State& d) { d[0] = -s[0]; };
+    RK4 a, b;
+    State ya{1.0}, yb{1.0};
+    const double ea = advance(a, decay, 0.0, ya, 1.0);
+    const double eb = advance(b, decay, 0.0, yb, 1.0, 5);
+    CHECK_NEAR(ea, 1.0, 1e-15);
+    CHECK_NEAR(eb, 1.0, 1e-15);
+    CHECK_NEAR(ya[0], yb[0], 0.0);
+}
+
+void testInclineExact() {
+    const double g = constants::g0;
+
+    // A. tan(0,3) = 0,31 <= mu_s : le bloc monte, s'arrête et RESTE COLLÉ.
+    {
+        const InclineProblem p = makeIncline(0.3, 0.5, 0.4, 1.0, 6.0);
+        CHECK(p.holds());
+        const double A = -g * (std::sin(0.3) + 0.4 * std::cos(0.3));
+        CHECK_NEAR(p.stageAcceleration(+1), A, 1e-14);
+        const double t1 = -p.v0 / A, s1 = p.s0 - p.v0 * p.v0 / (2.0 * A);
+        CHECK_NEAR(p.firstStopTime(), t1, 1e-13);
+
+        InclineState st = p.exact(0.0);
+        CHECK_NEAR(st.s, 1.0, 1e-15);
+        CHECK_NEAR(st.v, 6.0, 1e-15);
+        CHECK(!st.stuck);
+        st = p.exact(0.5 * t1);
+        CHECK_NEAR(st.s, p.s0 + p.v0 * 0.5 * t1 + 0.5 * A * 0.25 * t1 * t1, 1e-13);
+        CHECK_NEAR(st.v, p.v0 + A * 0.5 * t1, 1e-13);
+        CHECK_NEAR(st.path, st.s - p.s0, 1e-13);
+        st = p.exact(t1 + 3.0);
+        CHECK_NEAR(st.s, s1, 1e-12);
+        CHECK_NEAR(st.v, 0.0, 0.0);
+        CHECK_NEAR(st.path, s1 - p.s0, 1e-12);
+        CHECK(st.stuck);
+    }
+
+    // B. tan(0,6) = 0,68 > mu_s : le bloc monte, s'arrête, puis REDESCEND (glissement uniformément accéléré vers le bas).
+    {
+        const InclineProblem p = makeIncline(0.6, 0.5, 0.4, 0.0, 5.0);
+        CHECK(!p.holds());
+        const double Aup = -g * (std::sin(0.6) + 0.4 * std::cos(0.6)), Adown = -g * (std::sin(0.6) - 0.4 * std::cos(0.6));
+        CHECK(Adown < 0.0);
+        const double t1 = -p.v0 / Aup, s1 = -p.v0 * p.v0 / (2.0 * Aup);
+        const double dt = 0.8;
+        const InclineState st = p.exact(t1 + dt);
+        CHECK_NEAR(st.s, s1 + 0.5 * Adown * dt * dt, 1e-12);
+        CHECK_NEAR(st.v, Adown * dt, 1e-12);
+        CHECK_NEAR(st.path, s1 + (s1 - st.s), 1e-12);  // montée puis descente
+        CHECK(!st.stuck);
+    }
+
+    // C. Vers le bas, tan(0,2) < mu_d : le frottement FREINE la descente, le bloc s'arrête puis reste collé.
+    {
+        const InclineProblem p = makeIncline(0.2, 0.6, 0.5, 0.0, -3.0);
+        const double A = -g * (std::sin(0.2) - 0.5 * std::cos(0.2));
+        CHECK(A > 0.0);
+        const double t1 = -p.v0 / A, s1 = p.v0 * p.v0 / (-2.0 * A);  // s1 < 0
+        CHECK_NEAR(p.firstStopTime(), t1, 1e-13);
+        const InclineState st = p.exact(10.0 * t1);
+        CHECK_NEAR(st.s, s1, 1e-12);
+        CHECK(st.stuck);
+        CHECK_NEAR(st.path, -s1, 1e-12);
+    }
+
+    // D. Départ au repos : adhérence si tan(theta) <= mu_s, sinon glissement vers le bas.
+    {
+        const InclineProblem hold = makeIncline(0.3, 0.5, 0.4, 2.0, 0.0);
+        const InclineState a = hold.exact(7.0);
+        CHECK_NEAR(a.s, 2.0, 0.0);
+        CHECK(a.stuck);
+        CHECK_NEAR(hold.firstStopTime(), 0.0, 0.0);
+        const InclineProblem slide = makeIncline(0.6, 0.5, 0.4, 2.0, 0.0);
+        const double Adown = -g * (std::sin(0.6) - 0.4 * std::cos(0.6));
+        const InclineState b = slide.exact(1.5);
+        CHECK_NEAR(b.s, 2.0 + 0.5 * Adown * 2.25, 1e-12);
+        CHECK(!b.stuck);
+        CHECK(std::isinf(slide.firstStopTime()));
+    }
+
+    // Bilan d'énergie sans résistance : E(t) + mu_d g cos(theta) x chemin = E(0), pour toutes les phases.
+    for (const InclineProblem& p : {makeIncline(0.3, 0.5, 0.4, 1.0, 6.0), makeIncline(0.6, 0.5, 0.4, 0.0, 5.0),
+                                   makeIncline(0.2, 0.6, 0.5, 0.0, -3.0)}) {
+        const double e0 = p.energy(p.s0, p.v0);
+        for (double t : {0.1, 0.5, 0.9, 1.3, 2.0, 3.5, 8.0}) {
+            const InclineState st = p.exact(t);
+            CHECK_NEAR(p.energy(st.s, st.v) + p.muKinetic * g * std::cos(p.angle) * st.path, e0, 1e-11);
+        }
+    }
+
+    // Avec résistance k : v' = A - k v dans chaque phase (différences finies), v continue à l'arrêt, arrêt en ln(1 - k v0 / A)/k.
+    {
+        const InclineProblem p = makeIncline(0.6, 0.5, 0.4, 0.0, 5.0, 0.7);
+        const double Aup = p.stageAcceleration(+1), Adown = p.stageAcceleration(-1);
+        const double t1 = std::log(1.0 - p.drag * p.v0 / Aup) / p.drag;
+        CHECK_NEAR(p.firstStopTime(), t1, 1e-12);
+        CHECK_NEAR(p.exact(t1).v, 0.0, 1e-12);
+        const double h = 1e-4;
+        for (double t : {0.3 * t1, 0.8 * t1, t1 + 0.4, t1 + 1.5}) {
+            const InclineState c = p.exact(t), up = p.exact(t + h), dn = p.exact(t - h);
+            CHECK_NEAR((up.s - dn.s) / (2.0 * h), c.v, 1e-6);                            // s' = v
+            const double A = t < t1 ? Aup : Adown;
+            CHECK_NEAR((up.v - dn.v) / (2.0 * h), A - p.drag * c.v, 1e-6);               // v' = A - k v
+        }
+        // k -> 0 : on retrouve le mouvement uniformément accéléré (exp évitée par expm1 : pas de perte de chiffres)
+        const InclineProblem tiny = makeIncline(0.6, 0.5, 0.4, 0.0, 5.0, 1e-12), none = makeIncline(0.6, 0.5, 0.4, 0.0, 5.0, 0.0);
+        for (double t : {0.4, 1.0, 2.5}) CHECK_NEAR(tiny.exact(t).s, none.exact(t).s, 1e-9);
+    }
+}
+
+// « Événement + adhérence » : arrêt exact à v = 0 puis repos ou demi-tour. Retrouve les ordres des solveurs (ici avec résistance
+// k = 0,7 pour que la solution ne soit pas un simple polynôme : sans résistance Verlet et RK4 sont exacts, rien à mesurer).
+void testInclineEventDriven() {
+    struct Regime { InclineProblem p; double tEnd; bool stuck; };
+    const Regime regimes[] = {{makeIncline(0.3, 0.5, 0.4, 1.0, 6.0, 0.7), 5.0, true},    // A : monte, colle
+                              {makeIncline(0.6, 0.5, 0.4, 0.0, 5.0, 0.7), 4.0, false},   // B : monte, redescend
+                              {makeIncline(0.2, 0.6, 0.5, 0.0, -3.0, 0.7), 5.0, true}}; // C : descente freinée, colle
+    for (const Regime& r : regimes) {
+        const InclineState ex = r.p.exact(r.tEnd);
+        auto run = [&](Solver& solver, double stopTolerance) {
+            InclineRun sim(r.p);
+            for (int i = 0; i < static_cast<int>(std::lround(r.tEnd / 0.05)); ++i) sim.advance(solver, 0.05);
+            CHECK(sim.stops() == 1);                   // un seul arrêt dans ces trois scénarios
+            CHECK_NEAR(sim.stopTime(), r.p.firstStopTime(), stopTolerance);  // instant d'arrêt trouvé par bissection
+            CHECK(sim.state().stuck == r.stuck);
+            CHECK_NEAR(sim.time(), r.tEnd, 1e-12);
+            return sim.state();
+        };
+        RK4 rk4;
+        VelocityVerlet verlet;
+        RK45 rk45;
+        const InclineState a = run(rk4, 1e-6), b = run(verlet, 1e-2), c = run(rk45, 1e-8);  // l'arrêt hérite de l'ordre du solveur
+        CHECK_NEAR(a.s, ex.s, 1e-6);       // mesuré : 4e-8 à 9e-8
+        CHECK_NEAR(a.v, ex.v, 1e-7);
+        CHECK_NEAR(a.path, ex.path, 1e-6);
+        CHECK_NEAR(b.s, ex.s, 1e-2);       // mesuré : 1,4e-3 (ordre 2)
+        CHECK_NEAR(c.s, ex.s, 1e-8);       // mesuré : 1e-10 (tolérance par défaut)
+        CHECK_NEAR(c.path, ex.path, 1e-8);
+    }
+
+    // Sans résistance chaque phase est un polynôme de degré 2 : Verlet et RK4 sont exacts à l'arrondi.
+    {
+        const InclineProblem p = makeIncline(0.6, 0.5, 0.4, 0.0, 5.0, 0.0);
+        RK4 rk4;
+        VelocityVerlet verlet;
+        for (Solver* s : {static_cast<Solver*>(&rk4), static_cast<Solver*>(&verlet)}) {
+            InclineRun sim(p);
+            for (int i = 0; i < 80; ++i) sim.advance(*s, 0.05);
+            CHECK_NEAR(sim.state().s, p.exact(4.0).s, 1e-12);
+        }
+    }
+
+    // Ordres de convergence de l'erreur de position à t = 4 s (cas B) : ceux des solveurs, l'événement ayant supprimé la discontinuité.
+    const InclineProblem b = regimes[1].p;
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    auto ratio = [&](Solver& s, int n) {
+        return inclineError(b, InclineModel::EventDriven, s, n, 4.0) / inclineError(b, InclineModel::EventDriven, s, 2 * n, 4.0);
+    };
+    CHECK_NEAR(ratio(euler, 200), 2.0, 0.15);
+    CHECK_NEAR(ratio(symplectic, 200), 2.0, 0.15);
+    CHECK_NEAR(ratio(verlet, 100), 4.0, 0.4);
+    CHECK_NEAR(ratio(rk4, 100), 16.0, 1.5);
+
+    // Départ au repos : adhérence exacte (rien ne bouge, le temps passe) ou glissement exact.
+    {
+        const InclineProblem hold = makeIncline(0.3, 0.5, 0.4, 2.0, 0.0);
+        InclineRun sim(hold);
+        for (int i = 0; i < 10; ++i) sim.advance(rk4, 0.1);
+        CHECK(sim.state().stuck);
+        CHECK_NEAR(sim.state().s, 2.0, 0.0);
+        CHECK_NEAR(sim.state().v, 0.0, 0.0);
+        CHECK_NEAR(sim.time(), 1.0, 1e-12);
+        CHECK(sim.stops() == 0);
+        CHECK(std::isnan(sim.stopTime()));   // pas d'arrêt : rien à signaler
+
+        const InclineProblem slide = makeIncline(0.6, 0.5, 0.4, 2.0, 0.0);
+        InclineRun down(slide);
+        for (int i = 0; i < 20; ++i) down.advance(rk4, 0.1);
+        CHECK(!down.state().stuck);
+        CHECK_NEAR(down.state().s, slide.exact(2.0).s, 1e-12);
+    }
+}
+
+// Modèle naïf (sgn dans l'EDO) : la discontinuité fait tomber TOUS les schémas à l'ordre 1, le bloc ne s'arrête jamais exactement,
+// et il ignore mu_s. C'est la raison d'être de l'événement.
+void testInclineNaive() {
+    const InclineProblem a = makeIncline(0.3, 0.5, 0.4, 1.0, 6.0, 0.7);  // monte puis doit rester collé
+    InclineProblem smooth = a;                                            // même code, mais sans frottement sec : EDO lisse
+    smooth.muStatic = smooth.muKinetic = 0.0;
+
+    RK4 rk4;
+    VelocityVerlet verlet;
+    auto ratio = [](const InclineProblem& p, Solver& s, int n) {
+        return inclineError(p, InclineModel::Naive, s, n, 5.0) / inclineError(p, InclineModel::Naive, s, 2 * n, 5.0);
+    };
+    // mesuré : RK4 2,05 et 1,94 (n = 400, 800) contre 16,1 sans frottement sec ; Verlet 2,0 contre 4,0
+    CHECK_NEAR(ratio(a, rk4, 400), 2.0, 0.4);
+    CHECK_NEAR(ratio(a, rk4, 800), 2.0, 0.4);
+    CHECK_NEAR(ratio(smooth, rk4, 200), 16.0, 1.5);
+    CHECK_NEAR(ratio(a, verlet, 400), 2.0, 0.3);
+    CHECK_NEAR(ratio(smooth, verlet, 400), 4.0, 0.3);
+
+    // À pas égal (n = 400), l'événement est des millions de fois plus précis (mesuré : 6,7e-2 contre 3,3e-10).
+    const double naive = inclineError(a, InclineModel::Naive, rk4, 400, 5.0);
+    const double evented = inclineError(a, InclineModel::EventDriven, rk4, 400, 5.0);
+    CHECK(naive > 1e6 * evented);
+
+    // mu_d < tan(theta) <= mu_s : le bloc au repos doit RESTER COLLÉ (adhérence). Le modèle naïf ne connaît que mu_d : il glisse.
+    {
+        const InclineProblem p = makeIncline(0.45, 0.5, 0.4, 0.0, 0.0);
+        CHECK(p.holds());
+        CHECK_NEAR(p.exact(5.0).s, 0.0, 0.0);
+        State y = p.initialState();
+        const OdeFunction f = p.rhs(InclineModel::Naive);
+        double t = 0.0;
+        for (int i = 0; i < 500; ++i) t += advance(rk4, f, t, y, 0.01);
+        CHECK(y[0] < -5.0);                       // mesuré : -9,2 m en 5 s
+        InclineRun sim(p);
+        for (int i = 0; i < 500; ++i) sim.advance(rk4, 0.01);
+        CHECK_NEAR(sim.state().s, 0.0, 0.0);      // l'événement + adhérence : exactement immobile
+    }
+
+    // Vitesse résiduelle : après son arrêt le bloc (qui devrait rester immobile) garde une vitesse proportionnelle à dt (mesuré :
+    // 1,18 |A| dt) ; avec l'événement elle est exactement nulle.
+    {
+        const InclineProblem p = makeIncline(0.2, 0.6, 0.5, 0.0, -3.0, 0.0);
+        const double tStop = p.firstStopTime(), A = std::abs(p.stageAcceleration(-1));
+        auto residual = [&](double dt) {
+            State y = p.initialState();
+            const OdeFunction f = p.rhs(InclineModel::Naive);
+            double t = 0.0, vmax = 0.0;
+            const int n = static_cast<int>(std::lround(5.0 / dt));
+            for (int i = 0; i < n; ++i) {
+                t += advance(rk4, f, t, y, dt);
+                if (t > tStop + 0.3) vmax = std::max(vmax, std::abs(y[1]));
+            }
+            return vmax;
+        };
+        const double v1 = residual(0.01), v2 = residual(0.005);
+        CHECK(v1 > 0.5 * A * 0.01 && v1 < 2.0 * A * 0.01);
+        CHECK_NEAR(v1 / v2, 2.0, 0.2);
+        InclineRun sim(p);
+        for (int i = 0; i < 500; ++i) sim.advance(rk4, 0.01);
+        CHECK_NEAR(sim.state().v, 0.0, 0.0);
+    }
+}
+
+// Régularisation sgn(v) -> tanh(v / eps) : continue, mais ce n'est pas le bon modèle. Le bloc rampe au lieu d'adhérer, et l'erreur
+// vient de eps (modèle), pas du pas : diminuer dt n'y change rien (mesuré : même s(5 s) pour dt = 0,01 et 0,001).
+void testInclineRegularized() {
+    InclineProblem p = makeIncline(0.2, 0.6, 0.5, 0.0, -3.0, 0.0);  // freine puis doit coller
+    const double exact = p.exact(5.0).s;
+    auto run = [&](double eps, double dt) {
+        p.regularization = eps;
+        RK4 rk4;
+        State y = p.initialState();
+        const OdeFunction f = p.rhs(InclineModel::Regularized);
+        double t = 0.0;
+        for (int i = 0; i < static_cast<int>(std::lround(5.0 / dt)); ++i) t += advance(rk4, f, t, y, dt);
+        return y;
+    };
+    CHECK_NEAR(run(0.05, 0.01)[0], run(0.05, 0.001)[0], 1e-4);       // indépendant du pas
+    const double e02 = std::abs(run(0.2, 0.001)[0] - exact), e005 = std::abs(run(0.05, 0.001)[0] - exact),
+                 e001 = std::abs(run(0.01, 0.001)[0] - exact);
+    CHECK(e001 < e005 && e005 < e02);                                  // l'écart au vrai modèle suit eps (mesuré : 0,017 ; 0,085 ; 0,35)
+    CHECK(e005 > 0.05);
+    CHECK(run(0.05, 0.001)[1] != 0.0);                                 // la vitesse n'est jamais nulle : le bloc rampe
+
+    // Là où le bloc doit rester collé (mu_d < tan <= mu_s), il s'éloigne en rampant (mesuré : -9,4 m en 5 s).
+    InclineProblem q = makeIncline(0.45, 0.5, 0.4, 0.0, 0.0);
+    q.regularization = 0.05;
+    RK45 rk45;
+    State y = q.initialState();
+    const OdeFunction f = q.rhs(InclineModel::Regularized);
+    double t = 0.0;
+    for (int i = 0; i < 5; ++i) t += advance(rk45, f, t, y, 1.0);
+    CHECK(y[0] < -5.0);
+}
+
 void testPeriapsisTracker() {
     // Solution exacte échantillonnée grossièrement (50 points par période, décalés pour ne pas tomber pile sur un
     // périastre) : exactement 5 périastres sur 5,3 périodes, tous à l'angle 0 (orbite fermée, pas de précession).
@@ -1321,6 +1687,12 @@ int main() {
     testNBodyConvergence();
     testNBodyConservation();
     testNBodyChaos();
+    testEventDetection();
+    testAdvanceBudget();
+    testInclineExact();
+    testInclineEventDriven();
+    testInclineNaive();
+    testInclineRegularized();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");

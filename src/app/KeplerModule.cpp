@@ -44,13 +44,6 @@ std::string formatDuration(double seconds) {
     return strf("%.1f jours", seconds / 86400.0);
 }
 
-// Texte qui passe à la ligne dans le panneau (grisé pour les notes).
-void wrapped(const std::string& text, bool dim = false) {
-    if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("%s", text.c_str());
-    if (dim) ImGui::PopStyleColor();
-}
-
 // Flèche d'origine (x, z), de composantes (dx, dz) limitées à `maxLength` unités de scène.
 void drawArrow(Renderer& renderer, float x, float z, float dx, float dz, float maxLength, const float* c, float uiScale) {
     const float len = std::sqrt(dx * dx + dz * dz);
