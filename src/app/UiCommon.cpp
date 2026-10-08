@@ -1,8 +1,43 @@
 #include "UiCommon.hpp"
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 
 namespace pl {
+
+std::string strf(const char* format, ...) {
+    char buffer[256];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    return buffer;
+}
+
+void drawResultTable(const char* id, const std::vector<std::string>& headers, const std::vector<TableRow>& rows) {
+    const int columns = 1 + static_cast<int>(headers.size());
+    if (!ImGui::BeginTable(id, columns, ImGuiTableFlags_RowBg)) return;
+
+    // Colonnes numériques à largeur fixe (le plus long nombre affiché) ; "Méthode" prend le reste.
+    const float numW = ImGui::CalcTextSize("+0.0e+00").x + 2.0f * ImGui::GetStyle().CellPadding.x;
+    ImGui::TableSetupColumn("Méthode", ImGuiTableColumnFlags_WidthStretch);
+    for (const std::string& h : headers) ImGui::TableSetupColumn(h.c_str(), ImGuiTableColumnFlags_WidthFixed, numW);
+    ImGui::TableHeadersRow();
+
+    for (const TableRow& row : rows) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        if (row.color) ImGui::TextColored(toImVec4(row.color), "%s", row.name.c_str());
+        else ImGui::TextUnformatted(row.name.c_str());
+        for (const std::string& cell : row.cells) {
+            ImGui::TableNextColumn();
+            if (cell == "-") ImGui::TextDisabled("-");
+            else ImGui::TextUnformatted(cell.c_str());
+        }
+    }
+    ImGui::EndTable();
+}
 
 bool sliderD(const char* label, double* v, double lo, double hi, const char* fmt, ImGuiSliderFlags flags) {
     return ImGui::SliderScalar(label, ImGuiDataType_Double, v, &lo, &hi, fmt, flags);

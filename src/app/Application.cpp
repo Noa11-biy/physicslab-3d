@@ -17,7 +17,9 @@
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
 
+#include "DoublePendulumModule.hpp"
 #include "OscillatorModule.hpp"
+#include "PendulumModule.hpp"
 #include "ProjectileModule.hpp"
 #include "SimulationModule.hpp"
 #include "physicslab/core/Level.hpp"
@@ -310,6 +312,8 @@ int App::run(const AppOptions& options) {
 
     modules_.push_back(std::make_unique<ProjectileModule>());
     modules_.push_back(std::make_unique<OscillatorModule>());
+    modules_.push_back(std::make_unique<PendulumModule>());
+    modules_.push_back(std::make_unique<DoublePendulumModule>());
     activate(std::clamp(options.simulation - 1, 0, static_cast<int>(modules_.size()) - 1));
 
     using Clock = std::chrono::steady_clock;
