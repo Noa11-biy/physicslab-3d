@@ -46,8 +46,10 @@ include/physicslab/   en-têtes publics : core/ (maths, solveurs, monde), mechan
 src/                  sources : core/, mechanics/, render/, app/ (fenêtre, interface, un module par simulation)
 shaders/              *.comp, *.vert, *.frag
 tests/                validations (invariants, solutions analytiques, écart CPU/GPU)
+tools/                scripts utilitaires (capture d'écran automatique pour vérifier l'interface)
 third_party/          GLFW 3.4, ImGui 1.92 (docking), ImPlot 1.0 en sous-modules ; GLAD généré (GL 4.5 core)
 docs/
+  PASSATION.md        état du projet, règles de travail, pièges et prochaine étape (à lire pour reprendre)
   cours/              cours compilés par module (PDF / Word)
   devlog/             journal de développement par module
 ```
