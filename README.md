@@ -64,3 +64,7 @@ Ordre de progression (cocher au fil des modules) :
 - Une branche par module : `module/<nom>` (ex. `module/mecanique`).
 - Commits courts à l'impératif, préfixés : `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `build:`.
 - Fin de module : merge dans `main` puis tag `v<module>-<n>` (ex. `mecanique-1`).
+
+## Licence
+
+Projet open source sous licence [MIT](LICENSE).
