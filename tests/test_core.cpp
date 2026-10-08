@@ -1,7 +1,9 @@
 // Validation du socle : maths de base + comparaison du solveur à des solutions analytiques.
 // Pas de framework externe : un CHECK minimal suffit pour M0.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include "physicslab/core/Constants.hpp"
 #include "physicslab/core/Mat3.hpp"
@@ -9,7 +11,9 @@
 #include "physicslab/core/Solver.hpp"
 #include "physicslab/core/Vec3.hpp"
 #include "physicslab/core/World.hpp"
+#include "physicslab/mechanics/DoublePendulum.hpp"
 #include "physicslab/mechanics/Oscillator.hpp"
+#include "physicslab/mechanics/Pendulum.hpp"
 #include "physicslab/mechanics/Projectile.hpp"
 
 namespace {
@@ -425,6 +429,284 @@ void testOscillatorEnergy() {
     CHECK(finalRatio > 0.999);
 }
 
+
+// --- M3 : pendule simple et pendule double ----------------------------------------------
+
+PendulumProblem makePendulum(double theta0) {
+    PendulumProblem p;
+    p.length = 1.7;
+    p.mass = 0.8;
+    p.gravity = 9.81;
+    p.theta0 = theta0;
+    return p;
+}
+
+void testElliptic() {
+    CHECK_NEAR(ellipticK(0.0), constants::pi / 2.0, 1e-15);
+    CHECK_NEAR(ellipticK(0.5), 1.685750354812596, 1e-14);                // K(m = k^2 = 1/4)
+    CHECK_NEAR(ellipticK(std::sqrt(0.5)), 1.854074677301372, 1e-14);      // K(m = 1/2)
+}
+
+void testPendulumExact() {
+    for (double th0 : {0.05, 0.6, 1.5, 2.5, 3.05, -1.2}) {
+        const PendulumProblem p = makePendulum(th0);
+        CHECK(p.hasExactSolution());
+
+        double th, om;
+        p.exact(0.0, th, om);
+        CHECK_NEAR(th, th0, 1e-12);  // conditions initiales
+        CHECK_NEAR(om, 0.0, 1e-12);
+
+        // theta' = omega et omega' = -w0^2 sin(theta) (différences centrées)
+        const double h = 1e-5, w02 = p.gravity / p.length;
+        for (double t : {0.4, 1.3, 3.1}) {
+            double a, aw, b, bw, c, cw;
+            p.exact(t, a, aw);
+            p.exact(t + h, b, bw);
+            p.exact(t - h, c, cw);
+            CHECK_NEAR((b - c) / (2.0 * h), aw, 1e-6);
+            CHECK_NEAR((bw - cw) / (2.0 * h), -w02 * std::sin(a), 1e-5);
+            CHECK_NEAR(p.energy(a, aw), p.energy(th0, 0.0), 1e-10);  // énergie conservée
+        }
+
+        // Après une période, retour à l'état initial.
+        p.exact(p.period(), th, om);
+        CHECK_NEAR(th, th0, 1e-9);
+        CHECK_NEAR(om, 0.0, 1e-8);
+    }
+
+    // Indépendance de l'implémentation : la série elliptique doit coïncider avec un RK45 à tolérance 1e-13.
+    const PendulumProblem big = makePendulum(2.5);
+    RK45 rk;
+    rk.relTol = 1e-13;
+    rk.absTol = 1e-15;
+    State y = big.initialState();
+    advance(rk, big.rhs(), 0.0, y, 7.0);
+    double th, om;
+    big.exact(7.0, th, om);
+    CHECK_NEAR(th, y[0], 1e-9);
+    CHECK_NEAR(om, y[1], 1e-9);
+
+    // Valeurs connues : à 60 degrés T / T0 = 1,0732 ; aux petits angles T ~ T0 (1 + theta0^2 / 16).
+    const PendulumProblem sixty = makePendulum(constants::pi / 3.0);
+    CHECK_NEAR(sixty.period() / sixty.smallAnglePeriod(), 1.073182, 1e-5);
+    const PendulumProblem tiny = makePendulum(1e-2);
+    CHECK_NEAR(tiny.period() / tiny.smallAnglePeriod(), 1.0 + 1e-4 / 16.0, 1e-9);
+
+    PendulumProblem damped = makePendulum(1.0);
+    damped.damping = 0.1;
+    CHECK(!damped.hasExactSolution());
+    PendulumProblem pushed = makePendulum(1.0);
+    pushed.angularVelocity0 = 0.5;
+    CHECK(!pushed.hasExactSolution());
+}
+
+void testPendulumConvergence() {
+    const PendulumProblem p = makePendulum(2.0);
+    const double tEnd = 2.7 * p.period();
+
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    auto ratio = [&](Solver& s, int n) { return pendulumError(p, s, n, tEnd) / pendulumError(p, s, 2 * n, tEnd); };
+    CHECK_NEAR(ratio(euler, 3200), 2.0, 0.15);
+    CHECK_NEAR(ratio(symplectic, 3200), 2.0, 0.15);
+    CHECK_NEAR(ratio(verlet, 200), 4.0, 0.4);
+    // RK4 n'est asymptotique qu'à petit pas sur ce grand angle : 80 pas donnent encore un rapport de 52.
+    CHECK_NEAR(ratio(rk4, 2560), 16.0, 2.0);
+
+    // Pendule amorti : pas de solution élémentaire, la référence est le RK45 serré et les ordres sont les mêmes.
+    PendulumProblem damped = p;
+    damped.damping = 0.3;
+    CHECK(!damped.hasExactSolution());
+    auto dratio = [&](Solver& s, int n) { return pendulumError(damped, s, n, tEnd) / pendulumError(damped, s, 2 * n, tEnd); };
+    CHECK_NEAR(dratio(verlet, 200), 4.0, 0.4);
+    CHECK_NEAR(dratio(rk4, 2560), 16.0, 2.5);
+}
+
+// Énergie du pendule non linéaire sur 100 périodes : c'est ici que le caractère symplectique de Verlet se voit.
+void testPendulumEnergy() {
+    const PendulumProblem p = makePendulum(2.5);  // grande amplitude : très non linéaire
+    const double T = p.period();
+    const int perPeriod = 80, periods = 100, steps = perPeriod * periods;
+    const double dt = T / perPeriod;
+    const OdeFunction f = p.rhs();
+    const double e0 = p.energy(p.theta0, 0.0);
+
+    auto run = [&](Solver& solver, double& maxFirst, double& maxLast, double& finalRatio) {
+        State y = p.initialState();
+        double t = 0.0;
+        maxFirst = maxLast = 0.0;
+        for (int i = 1; i <= steps; ++i) {
+            t += advance(solver, f, t, y, dt);
+            const double rel = p.energy(y[0], y[1]) / e0;
+            if (i <= 10 * perPeriod) maxFirst = std::max(maxFirst, std::abs(rel - 1.0));
+            if (i > (periods - 10) * perPeriod) maxLast = std::max(maxLast, std::abs(rel - 1.0));
+            finalRatio = rel;
+        }
+    };
+
+    double maxFirst, maxLast, finalRatio = 0.0;
+
+    ExplicitEuler euler;
+    run(euler, maxFirst, maxLast, finalRatio);
+    CHECK(finalRatio > 10.0);  // l'énergie explose
+
+    SymplecticEuler symplectic;
+    run(symplectic, maxFirst, maxLast, finalRatio);
+    CHECK(maxLast < 1.05 * maxFirst);  // bornée : l'amplitude des oscillations de E ne grandit pas
+
+    VelocityVerlet verlet;
+    run(verlet, maxFirst, maxLast, finalRatio);
+    CHECK(maxFirst < 0.05);
+    CHECK(maxLast < 1.05 * maxFirst);
+
+    RK4 rk4;
+    run(rk4, maxFirst, maxLast, finalRatio);
+    CHECK(std::abs(finalRatio - 1.0) < 1e-3);
+}
+
+DoublePendulumProblem chaoticProblem() {
+    DoublePendulumProblem p;
+    p.m1 = 1.0; p.m2 = 1.3; p.l1 = 1.0; p.l2 = 0.8;
+    p.theta1 = 2.0; p.theta2 = 2.0;
+    return p;
+}
+
+void testDoublePendulumEquations() {
+    // Cohérence des équations transcrites : E = T + V est constante le long du flot, donc dE/dt = grad(E) . f = 0.
+    // (une faute de signe ou de facteur dans rhs() fait échouer ce test)
+    const DoublePendulumProblem p = chaoticProblem();
+    const OdeFunction f = p.rhs();
+    const State samples[] = {{0.7, -0.4, 0.3, 0.2}, {2.0, 2.0, 0.0, 0.0}, {-1.1, 2.6, 1.5, -2.0}, {3.0, 0.1, -0.8, 1.9}};
+    for (const State& y : samples) {
+        State d(4);
+        f(0.0, y, d);
+        const double eps = 1e-6;
+        State up = y, dn = y;
+        for (int i = 0; i < 4; ++i) { up[i] += eps * d[i]; dn[i] -= eps * d[i]; }
+        CHECK_NEAR((p.energy(up) - p.energy(dn)) / (2.0 * eps), 0.0, 1e-6);
+    }
+
+    // Limite m2 -> 0 : le pendule du haut devient un pendule simple de longueur l1.
+    DoublePendulumProblem light = chaoticProblem();
+    light.m2 = 1e-12;
+    State y = {0.7, -0.4, 0.3, 0.2}, d(4);
+    light.rhs()(0.0, y, d);
+    CHECK_NEAR(d[2], -(light.gravity / light.l1) * std::sin(0.7), 1e-8);
+
+    // Pendule double au repos en bas : équilibre.
+    y = {0.0, 0.0, 0.0, 0.0};
+    p.rhs()(0.0, y, d);
+    for (double v : d) CHECK_NEAR(v, 0.0, 1e-15);
+
+    // Géométrie : theta = 0 pend verticalement, theta1 = pi/2 horizontalement.
+    double x1, y1, x2, y2;
+    p.positions({constants::pi / 2.0, 0.0, 0.0, 0.0}, x1, y1, x2, y2);
+    CHECK_NEAR(x1, p.l1, 1e-12);
+    CHECK_NEAR(y1, 0.0, 1e-12);
+    CHECK_NEAR(x2, p.l1, 1e-12);
+    CHECK_NEAR(y2, -p.l2, 1e-12);
+}
+
+void testDoublePendulumNumerics() {
+    const DoublePendulumProblem p = chaoticProblem();
+
+    // La référence RK45 conserve l'énergie sur 20 s de mouvement chaotique.
+    RK45 rk;
+    rk.relTol = 1e-13;
+    rk.absTol = 1e-15;
+    State y = p.initialState();
+    const double e0 = p.energy(y);
+    double t = 0.0;
+    double worst = 0.0;
+    for (int i = 0; i < 2000; ++i) {
+        t += advance(rk, p.rhs(), t, y, 0.01);
+        worst = std::max(worst, std::abs(p.energy(y) - e0));
+    }
+    CHECK(worst < 1e-9 * (p.m1 + p.m2) * p.gravity * (p.l1 + p.l2));
+
+    // Ordres de convergence à t = 2 s (avant que le chaos n'amplifie tout), mesurés sur la distance à la référence.
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    auto ratio = [&](Solver& s, int n) {
+        return doublePendulumError(p, s, n, 2.0) / doublePendulumError(p, s, 2 * n, 2.0);
+    };
+    CHECK_NEAR(ratio(euler, 3200), 2.0, 0.2);
+    CHECK_NEAR(ratio(symplectic, 3200), 2.0, 0.2);
+    CHECK_NEAR(ratio(verlet, 200), 4.0, 0.5);
+    CHECK_NEAR(ratio(rk4, 100), 16.0, 3.0);
+}
+
+// Le chaos en chiffres : deux départs qui diffèrent de 1e-9 rad. Pendule double : écart exponentiel,
+// exposant de Lyapunov positif. Pendule simple : écart qui croît lentement (déphasage), pas d'exponentielle.
+void testChaosVersusRegular() {
+    const double delta = 1e-9, tEnd = 25.0, dt = 0.01;
+
+    // distance entre l'orbite et son jumeau perturbé, échantillonnée tous les dt
+    auto twinDistances = [&](const OdeFunction& rhs, State a, State b, auto&& distance, std::vector<double>& ts,
+                             std::vector<double>& ds) {
+        RK45 s1, s2;
+        s1.relTol = s2.relTol = 1e-13;
+        s1.absTol = s2.absTol = 1e-15;
+        double t = 0.0;
+        while (t < tEnd - 1e-9) {
+            advance(s1, rhs, t, a, dt);
+            advance(s2, rhs, t, b, dt);
+            t += dt;
+            ts.push_back(t);
+            ds.push_back(distance(a, b));
+        }
+    };
+
+    // pendule double
+    {
+        const DoublePendulumProblem p = chaoticProblem();
+        State a = p.initialState(), b = a;
+        b[0] += delta;
+        std::vector<double> ts, ds;
+        twinDistances(p.rhs(), a, b, [&](const State& u, const State& v) { return p.distance(u, v); }, ts, ds);
+        const double growth = *std::max_element(ds.begin(), ds.end()) / delta;
+        CHECK(growth > 1e5);  // amplification d'au moins 5 ordres de grandeur
+        int used = 0;
+        const double lambda = lyapunovExponent(ts, ds, 1e2 * delta, 1e-1, &used);
+        CHECK(used >= 50);
+        CHECK(lambda > 0.5 && lambda < 5.0);
+    }
+    // pendule simple (lâché de 2 rad), jumeau décalé de delta
+    {
+        const PendulumProblem p = makePendulum(2.0);
+        State a = p.initialState(), b = a;
+        b[0] += delta;
+        std::vector<double> ts, ds;
+        twinDistances(p.rhs(), a, b,
+                      [&](const State& u, const State& v) {
+                          const double dTheta = u[0] - v[0], dOmega = (u[1] - v[1]) / p.omega0();
+                          return std::sqrt(dTheta * dTheta + dOmega * dOmega);
+                      },
+                      ts, ds);
+        const double growth = *std::max_element(ds.begin(), ds.end()) / delta;
+        CHECK(growth < 200.0);  // croissance au plus linéaire en t (déphasage), loin de l'exponentielle
+    }
+}
+
+void testLyapunovFit() {
+    // données synthétiques d(t) = d0 e^{0.7 t}, saturées à 1 : l'ajustement doit retrouver 0.7 sur la fenêtre exponentielle
+    std::vector<double> t, d;
+    for (int i = 0; i < 4000; ++i) {
+        t.push_back(0.01 * i);
+        d.push_back(std::min(1e-9 * std::exp(0.7 * 0.01 * i), 1.0));
+    }
+    int used = 0;
+    CHECK_NEAR(lyapunovExponent(t, d, 1e-8, 1e-1, &used), 0.7, 1e-9);
+    CHECK(used > 100);
+    CHECK(std::isnan(lyapunovExponent(t, d, 2.0, 3.0, &used)));  // aucune donnée dans la fenêtre
+    CHECK(used == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -440,6 +722,14 @@ int main() {
     testOscillatorExact();
     testOscillatorConvergence();
     testOscillatorEnergy();
+    testElliptic();
+    testPendulumExact();
+    testPendulumConvergence();
+    testPendulumEnergy();
+    testDoublePendulumEquations();
+    testDoublePendulumNumerics();
+    testChaosVersusRegular();
+    testLyapunovFit();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");

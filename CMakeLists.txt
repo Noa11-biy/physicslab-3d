@@ -32,7 +32,9 @@ add_library(physicslab_core STATIC
     src/core/Solver.cpp
     src/core/World.cpp
     src/mechanics/Projectile.cpp
-    src/mechanics/Oscillator.cpp)
+    src/mechanics/Oscillator.cpp
+    src/mechanics/Pendulum.cpp
+    src/mechanics/DoublePendulum.cpp)
 target_include_directories(physicslab_core PUBLIC include)
 physicslab_warnings(physicslab_core)
 
