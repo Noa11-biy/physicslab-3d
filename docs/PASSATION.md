@@ -1,7 +1,7 @@
 # Passation : PhysicsLab 3D
 
 Ce fichier permet de reprendre le projet dans une nouvelle conversation sans rien perdre. À lire en entier avant de coder.
-Dernière mise à jour : fin de M5b (Mécanique : M0 à M4, frottement sec, chocs et rebonds terminés), branche `module/mecanique`. Prochaine étape : M5c (la feuille de route est rédigée en section 6, l'utilisateur ne l'a pas encore validée).
+Dernière mise à jour : fin de M5c (Mécanique : M0 à M5 terminés : frottement sec, chocs et rebonds, berceau de Newton), branche `module/mecanique`. Prochaine étape : M6 corps rigide (brouillon de feuille de route en section 6, l'utilisateur ne l'a pas encore validé).
 
 ## 1. Rôle et règles de travail
 
@@ -45,8 +45,8 @@ Moléculaire, Information quantique, Particules, Géophysique, Météo, Biophysi
 | M4 | Gravitation : M4a Kepler à 2 corps (précession numérique prédite), M4b N-corps CPU (huit, Lagrange, amas) | fait |
 | M5a | Frottement sec de Coulomb sur plan incliné (événements, adhérence, 3 modèles numériques) | fait |
 | M5b | Chocs et rebonds (restitution, balle rebondissante et accumulation de Zénon, choc de deux billes) | fait |
-| **M5c** | **Plusieurs corps : berceau de Newton (impulsions séquentielles contre contact de Hertz)** | **à faire (suite logique)** |
-| M6 | Corps rigide (quaternions, toupie, solide libre) | à faire |
+| M5c | Berceau de Newton (contact de Hertz contre impulsions séquentielles, `--sim 9`) | fait |
+| **M6** | **Corps rigide (quaternions, toupie, solide libre)** | **à faire (suite logique)** |
 | M7 | N-corps GPU en compute shader (écart CPU/GPU) | à faire |
 
 Dépôt : https://github.com/Noa11-biy/physicslab-3d (public, licence MIT). Branche de travail : `module/mecanique`
@@ -102,6 +102,29 @@ module quand l'utilisateur le demande ou continue la chaîne (c'était son souha
   l'erreur vient de la détection. Deux billes (disques de rayon 0,5, e = 1, masses égales, décalage 0,6 m) : contact à t = 1,0667 s, angle de sortie 90° ; événement :
   erreur ≤ 8e-14 pour les quatre solveurs, instant du choc exact à 1e-12 ; naïf : **même erreur pour les quatre solveurs** (RK4 compris), proportionnelle au pas
   (0,43 puis 0,10 puis 0,025 quand le pas est divisé par 4 à chaque fois), choc vu 3,3e-3 s trop tard à dt = 0,01 ; l'impulsion reste conservée même en naïf.
+- **Berceau de Newton (M5c)**, unités normalisées (m = 1, R = 1/2, k = 1e4, v = 1) : constante du temps de contact (4/5) Γ(2/5) Γ(1/2) / Γ(9/10) = 2,943275 ;
+  deux billes (RK45 serré) : δ_max = 0,0208138302 et T = 0,0612608299 retrouvés à 6e-13 et 1,6e-13 (relatif), sortie = échange des vitesses à 5e-13, P conservée à 1e-16.
+  **Le résultat d'une chaîne ne dépend ni de k ni de v** (une seule échelle de longueur (m v²/k)^(2/5)) : 3 billes (k, v) = (1e4, 1), (1e6, 1), (1e4, 3), (2e3, 0,2) donnent les
+  mêmes six chiffres ; seule la durée change (0,0943 s contre 0,01495 s pour k × 100, rapport 6,3 = 100^(2/5)).
+  **Hertz, 3 billes, 1 lancée** : (−0,070952 ; +0,076403 ; +0,994549), soit x = −v1/v = 0,0710 sur la courbe des solutions [0 ; 1/3] (impulsions e = 1 : x = 0).
+  Chaîne de N billes, 1 lancée : N = 4 (−0,0711 ; −0,0296 ; +0,1097 ; +0,9910) ; N = 5 (−0,071085 ; −0,030274 ; −0,014464 ; +0,127045 ; +0,988777) ; la dernière bille part à
+  0,9945 / 0,9910 / 0,9888 / 0,9875 / 0,9867 pour N = 3 à 7 ; les billes de tête reculent d'environ 0,07 v (pas « une entre, une sort » exact). 2 lancées sur 5 :
+  (−0,112615 ; −0,041960 ; +0,214486 ; +0,800367 ; +1,139722). Symétrie exacte (miroir + changement de repère galiléen) entre n lancées et N−n lancées : écart ≤ 1e-8 (N = 3 à 6).
+  RK4 au pas T/100 : accord avec RK45 serré à 1e-5, énergie finale à 4e-7. Durée de la collision : 0,094 s (N = 3), 0,156 s (N = 5), 0,216 s (N = 7).
+  **Impulsions séquentielles** (e = 1, masses égales, chaque choc échange les vitesses : résultat = tri des vitesses) : n entrent, n sortent, quel que soit l'ordre. **L'ordre de
+  résolution ne change rien dans le berceau, même avec e < 1** : écart exactement 0 sur 245 cas (N = 3 à 9, n, e de 0,99 à 0) ; la causalité impose la séquence des chocs. Il
+  compte pour une bille prise entre deux voisines qui s'approchent déjà : vitesses (1 ; 0,5 ; 0 ; 0), e = 0,5 : écart 0,070 entre gauche → droite et droite → gauche
+  (nul pour e = 1). Avec e < 1, 3 billes, 1 lancée : e = 0,9 donne (0,0476 ; 0,0499 ; 0,9025) et perd 0,090 ; e = 0,5 donne (0,203 ; 0,234 ; 0,563) ; aucune bille ne recule
+  jamais (différence qualitative avec Hertz).
+  **Ordres des schémas sur le contact** (3 billes, contact décalé de 0,0123 pour ne pas tomber sur la grille, erreur dans l'espace des phases à t = 0,2) : Euler 1 (rapport 4,07 de
+  800 à 3200 pas), Verlet 2 (15,4 de 400 à 1600 pas) ; **Euler symplectique = Verlet à 5e-13** (conjugués, et la mesure est faite hors contact : pas de force au début ni à la fin) ;
+  **RK4 n'atteint pas l'ordre 4** : ordre apparent 2,29 / 2,38 / 2,51 / 2,75 selon la phase du contact sur la grille (décalages 0,0123 / 0 / 0,0231 / 0,0377 ; pas de 200 à 3200
+  pas), rapports par doublement erratiques (73, 1, 8, 6, 1,4, 8) ; cause probable (non testée avec une force lisse) : la force k δ^(3/2) n'a pas de dérivée seconde en δ = 0.
+  RK45 par défaut (tol 1e-8) : erreur 2,4e-7 (3 billes) à 3,4e-7 (5 billes), 88 pas acceptés, 26 refusés, 798 évaluations sur [0 ; 0,2]. Stabilité (3 lancées sur 7) : Euler
+  explicite **diverge** à 10 pas par contact (valeurs infinies pour k = 1e4 et 1e6 ; E/E0 = 1672 pour k = 1e2), E/E0 = 1,881 à 30 pas et 1,1135 à 100 pas, identique pour k de 1e2 à 1e6 ; Euler
+  symplectique et Verlet : 1,0004 à 10 pas, 1,0000 à 30 pas. **Amortissement de Hunt-Crossley** F = k δ^(3/2) (1 + (3/2) α δ'), v = 1 : e = 0,990099 / 0,952370 / 0,909016 / 0,768 pour α = 0,01 / 0,05 / 0,1 / 0,3, soit
+  e ≈ 1/(1 + α v) (écart à 1 − α v : 0,99 (α v)² pour α = 0,01, 0,90 (α v)² pour α = 0,1), perte relative d'énergie 2 α v au premier ordre (0,0197 pour α = 0,01) ; chaîne de 5, α = 0,05 :
+  (−0,0553 ; −0,0183 ; −0,0026 ; +0,1488 ; +0,9273), moins de recul qu'en contact conservatif.
 
 ## 3. Architecture du code
 
@@ -113,6 +136,8 @@ include/physicslab/
                Friction (InclineProblem : solution exacte par morceaux ; InclineRun : événement + adhérence ; modèles Naive / Regularized),
                Collision (collide1D, collideSpheres : restitution de Newton ; TwoBallProblem / TwoBallRun), Bounce (BounceProblem : solution exacte par vols
                successifs réutilisant ProjectileProblem ; BounceRun : modèles Naive / EventDriven, ContactModel),
+               Cradle (hertz:: force, énergie, références exactes de deux billes ; CradleProblem : chaîne de N billes de Hertz avec amortissement de Hunt-Crossley et
+               écart initial, run() jusqu'à la fin de la collision, reference() et cradleError() ; cradle:: sequentialImpulses, threeBallFamily),
                NBody (nbody::accelerations : interface « force sur chaque particule » découplée de l'intégrateur, reprise par le GPU en M7)
   render/      Camera (orbitale, float), Renderer (OpenGL 4.5 DSA : lignes et points colorés)
 src/core, src/mechanics, src/render   implémentations
@@ -178,6 +203,13 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
   après le choc), puis un pas de décollage d'1/1000 du temps de montée (`launch_`). Même idée pour les billes : g = max(distance, 0), sinon faux événement au redémarrage.
   Le seuil d'arrêt doit rester ≥ 1e-8 m/s : en dessous `ProjectileProblem::landingTime` (bracket depuis 1e-9 s) renvoie 0. Ne pas asserter le nombre de rebonds du
   modèle naïf (24, 52, 99 selon dt) ni les erreurs d'ordre mesurées APRÈS le repos (les rapports « x4 » y sont trompeurs).
+- **Hertz / berceau** : une force continue n'a pas besoin d'événement, mais elle n'est pas lisse en δ = 0 : l'ordre de RK4 tombe vers 2,5 et ses rapports d'erreur par doublement
+  sont erratiques (ne jamais asserter « x16 » ni « x5,6 » : utiliser une pente sur 200 → 3200 pas et des bornes larges). Le début du contact doit être décalé (`gap` non
+  aligné sur la grille) pour mesurer un ordre ; sinon les erreurs sont celles d'une phase alignée (0 : ordre apparent 2,38). **Euler symplectique et Verlet donnent la même erreur ici parce que l'état
+  initial et l'état final n'ont pas de force** (conjugaison par un demi-pas de vitesse) : ne pas en conclure que Euler symplectique est d'ordre 2 en général. Mesurer δ_max et T
+  par événement (vitesse relative nulle, puis compression nulle), jamais en échantillonnant le maximum aux pas de RK45 (les pas adaptatifs sont longs : erreur d'échantillonnage non négligeable). La fin de la collision est
+  `collisionOver` : plus aucune compression ET vitesses rangées (gauche pas plus rapide que droite) ; la compression seule ne suffit pas. L'ordre de résolution des impulsions
+  ne change rien dans le berceau (le brouillon de M5c affirmait le contraire : faux, mesuré). `cradleError` recalcule la référence RK45 à chaque appel (28 appels pour l'étude de convergence : sans à-coup visible, durée non mesurée).
 - **Interface** : la police Segoe UI n'a pas ∇ ni ∝ (affichés « � ») ; ∂, ᵀ, ω, √, ≈, Δ passent. Plus de 3 colonnes numériques dans « Invariants » (~400 px)
   écrasent la colonne « Méthode » : scinder en deux tableaux. `TextDisabled` ne passe pas à la ligne : utiliser `TextWrapped` colorée pour les notes.
 - **PowerShell 5.1** : `Get-Content -Raw | Set-Content -Encoding utf8` ré-encode les accents (mojibake) et ajoute un BOM. Éditer avec l'outil Edit, ou avec
@@ -195,62 +227,57 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
 - Avertissements « CRLF will be replaced by LF » : normaux, `.gitattributes` force LF dans le dépôt.
 - Les chaînes de l'interface sont en UTF-8 avec lettres grecques (ω, ζ, θ, λ…) : elles s'affichent grâce à Segoe UI (Windows) ou DejaVu
   (Linux). Sans ces polices, la police intégrée d'ImGui n'affiche pas le grec.
+- M5c : ℓ (U+2113) et ≪ (U+226A) remplacés par « L » et un texte par précaution (non testés) ; ¼, α, ≤, ≈, ², ½, −, →, ↔ passent. Un schéma qui diverge (Euler explicite à 10 pas par contact) met des
+  valeurs infinies dans l'état : détecter (`diverged_`), arrêter, ne pas dessiner, ne pas échantillonner. Le ralenti du choc se décide par image (`slowMotion()`), pas par pas de temps.
+  `tests/test_core.cpp` est en CRLF dans la copie de travail (un `replace` Python doit utiliser \r\n) ; `Application.cpp` a des fins de ligne mixtes : utiliser l'outil Edit ; les nouveaux fichiers sont en LF.
 
 ## 5. Vérifier avant de commiter
 
 ```bash
 cmake -S . -B build -G Ninja && cmake --build build           # aucun avertissement attendu (-Wall -Wextra -Wpedantic)
 ctest --test-dir build --output-on-failure                     # "test_core : OK"
-for s in 1 2 3 4 5 6 7 8; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
+for s in 1 2 3 4 5 6 7 8 9; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
 ```
 Build Debug propre depuis zéro de temps en temps (`-DCMAKE_BUILD_TYPE=Debug` dans un dossier jetable : vérifie les `assert`).
 Vérification visuelle (PowerShell) : `.\tools\screenshot.ps1 -Level 5 -Sim 4 -Wait 8` puis ouvrir le PNG indiqué. Regarder au moins les
 niveaux 1, 3, 5 et 6 d'un nouveau module, et un ancien module pour la non-régression. `-Clicks "x,y;x,y"` simule des clics.
 
-Options de l'application : `--level 1..6`, `--sim 1..8` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
-6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
+Options de l'application : `--level 1..6`, `--sim 1..9` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
+6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
 
-## 6. Suite : M5c berceau de Newton (feuille de route présentée le 2026-10-08, en attente du « oui » de l'utilisateur)
+## 6. Suite : M6 corps rigide (brouillon, à re-présenter brièvement au début de la prochaine conversation, puis commencer par l'étape 1 si l'utilisateur valide)
 
-À re-présenter brièvement au début de la prochaine conversation (règle du domaine), puis commencer par l'étape 1 si l'utilisateur valide.
+Brouillon rédigé de mémoire, à valider par le calcul avant de l'écrire dans l'interface (règle : ne rien affirmer sans l'avoir mesuré).
 
-**Le problème.** Avec 3 billes au contact, la conservation de l'impulsion et de l'énergie ne suffit pas à déterminer le résultat (vérifié à la main) :
-une bille de vitesse v frappe deux billes au repos ; les vitesses finales vérifient Σv = v et Σv² = v², soit v1 v2 + v1 v3 + v2 v3 = 0. En posant v1 = −x
-(0 ≤ x ≤ 1/3 pour que v2, v3 soient réelles, avec v1 ≤ v2 ≤ v3), v2 et v3 sont les racines de t² − (1+x) t + x (1+x) = 0 : par exemple x = 0,1 donne
-(−0,1 ; 0,111 ; 0,989) v. C'est une FAMILLE de solutions (un cercle dans l'espace des vitesses, tronqué par l'ordre), dont « une entre, une sort » (x = 0 :
-(0, 0, v)) n'est qu'un point. Seule la dynamique du contact tranche. À tester par le calcul avant de l'écrire dans l'interface.
+**Le problème.** Un solide indéformable de masse m, de tenseur d'inertie I (constant dans le repère du corps, diagonal I1, I2, I3 dans les axes principaux). État : position du
+centre de masse, orientation (quaternion unitaire q), impulsion, moment cinétique. Sans couple, dans le repère du corps : équations d'Euler I ω' = (I ω) × ω ; orientation
+q' = ½ q ⊗ (0, ω). Invariants : |q| = 1, le vecteur L (dans le repère fixe), l'énergie E = ½ ω·I ω.
 
-**Deux modèles à comparer.**
-1. *Impulsions séquentielles* (le modèle de M5b, `collideSpheres`) : un choc à la fois. Avec e = 1 et l'ordre de propagation gauche → droite on obtient « une entre,
-   une sort » ; un autre ordre ou e < 1 change le résultat (faiblesse du modèle, pas de la physique).
-2. *Contact de Hertz* F = k δ^(3/2) (δ = interpénétration, nulle si les billes ne se touchent pas) : les billes sont des ressorts non linéaires, une onde de
-   compression traverse la chaîne ; le résultat sort de la dynamique. Attendu : proche de « une entre, une sort » avec de petites vitesses résiduelles sur les
-   autres billes : À MESURER, ne pas l'affirmer. Amortissement optionnel (désactivé par défaut).
-
-**Références exactes** (deux billes identiques, vitesse d'approche v, μ = m/2) : énergie ½ μ v² = (2/5) k δ_max^(5/2), donc δ_max = (5 μ v² / (4 k))^(2/5) ;
-durée du contact T = 2,943 δ_max / v, où 2,943 = (4/5) Γ(2/5) Γ(1/2) / Γ(9/10) (calculé : 2,9433, valeur classique 2,9432) ; sortie élastique = échange des vitesses.
-La chaîne de N billes n'a pas de solution fermée : référence = RK45 serré, avec P et E conservées (E = énergie cinétique + Σ (2/5) k δ^(5/2)).
+**Références exactes.** (1) Solide symétrique libre (I1 = I2) : ω3 constante, (ω1, ω2) tourne à (I3 − I1) ω3 / I1 dans le repère du corps, l'axe du corps précesse autour de L à
+la vitesse L / I1. (2) Solide asymétrique libre : fonctions elliptiques de Jacobi (`ellipticK` existe dans Pendulum.hpp ; sn, cn, dn à écrire : le pendule n'utilise que le développement de Fourier de sn) ; instabilité de l'axe
+intermédiaire (raquette de tennis), taux de croissance λ = ω2 sqrt((I3 − I2)(I2 − I1) / (I1 I3)) pour I1 < I2 < I3. (3) Toupie pesante de Lagrange : trois intégrales premières
+(E, L_z, L_3), problème de nutation réduit à une quadrature en θ ; toupie « endormie » stable si I3² ω3² > 4 I1 m g l.
 
 **Difficultés numériques.**
-- Raideur : la durée du contact est très courte devant le mouvement, le pas est limité par la fréquence du contact (choisir des unités normalisées raisonnables).
-- Régularité : la force de Hertz est continue mais non lisse en δ = 0 (dérivée en δ^(1/2)) ; mesurer l'ordre effectif des solveurs (ne pas le prédire).
-- Plusieurs contacts à la fois, sans événement à localiser (force continue) : c'est ce qui contourne la limite de `advanceToEvent` (un seul changement de signe par pas).
-- RK45 : toujours avec `advance(..., maxSteps)`.
+- L'état n'est pas plat : un quaternion vit sur la sphère S³ (le `Solver` actuel suppose y = [positions | vitesses] dans R^n). Un RK4 sur q fait dériver la norme ; options :
+  RK4 + renormalisation (ordre à mesurer), schémas de groupe de Lie (q ← q ⊗ exp(h ω / 2)), découpage symplectique (rotations exactes successives autour des axes principaux :
+  L conservé exactement, E borné). Mesurer la dérive de |q|, de L et de E pour chacun.
+- Euler explicite sur ω et q : dérive d'énergie à mesurer.
+- Choc d'un corps rigide (impulsion en un point, cône de Coulomb, paradoxe de Painlevé) : hors périmètre de M6 sauf bonus (suite naturelle de M5).
 
-**Simulations (`--sim 9`).** Choc de deux billes (comparaison à δ_max et T exacts) ; chaîne de 3 à 7 billes, nombre de billes lancées réglable ; modèle au choix
-(impulsions avec l'ordre de résolution, ou Hertz avec amortissement optionnel) ; au niveau 5, pour N = 3, graphe de l'ensemble des solutions (P et E conservées) avec
-le résultat de chaque modèle placé dessus (point pédagogique central) ; niveaux 1-6, tableaux de 3 colonnes numériques au plus.
+**Simulations (`--sim 10`).** Solide symétrique libre (précession, cône) ; solide asymétrique libre (parallélépipède : les trois axes, stabilité, polhodes au niveau 5) ; toupie de
+Lagrange et toupie endormie ; au niveau 6, comparaison des intégrateurs d'orientation (dérive de |q|, L, E).
 
-**Plan.** (1) Cœur et tests d'abord : force de Hertz, références exactes de 2 billes, chaîne, impulsions séquentielles, invariants. (2) Interface. (3) Commit, push, passation.
-**Choix par défaut :** chaîne horizontale idéale sur rail (sans pendule), billes identiques en unités normalisées, amortissement désactivé. Bonus seulement si tout le
-reste est fini : billes suspendues (force de rappel g/L) et contact linéaire « ressort » pour comparaison.
+**Plan.** (1) Cœur et tests d'abord : tenseurs d'inertie (sphère, boîte, cylindre), équations d'Euler, solution exacte du solide symétrique, référence RK45 1e-13 pour l'asymétrique,
+invariants, intégrateurs d'orientation. (2) Interface. (3) Commit, push, passation.
 
-**À réutiliser :** `advanceToEvent`, `collideSpheres` / `TwoBallRun` (impulsions), `Solver` / `RK45` avec `maxSteps`, `SolverSet`, `StepClock`, `drawResultTable` (≤ 3 colonnes
-numériques par tableau), `wrapped`, `Events.hpp`. Préparer M6 (corps rigide : chocs avec rotation, cône de Coulomb, paradoxe de Painlevé) et M7 (GPU).
+**À réutiliser :** `Quaternion`, `Mat3` (core), `Solver` / RK45 avec `maxSteps`, `ellipticK` (Pendulum.hpp), `SolverSet`, `StepClock`, `drawResultTable` (≤ 3 colonnes numériques),
+`wrapped`, `CradleModule` comme exemple récent de module (deux modèles côte à côte, ralenti, détection de divergence). Avant M7 (GPU) : fin de domaine Mécanique à livrer
+après M7 (devlog, cours PDF, roue des domaines, merge dans `main`, tag `mecanique-1`).
 
 ## 7. Dette technique et idées
 
-- `computeConvergence()` est dupliqué dans 8 modules (variantes : erreur à `tEnd` fixe ; pente ajustée là où l'erreur < 0,1 pour M4 ; tous les points pour M5a) :
+- `computeConvergence()` est dupliqué dans 9 modules (variantes : erreur à `tEnd` fixe ; pente ajustée là où l'erreur < 0,1 pour M4 ; tous les points pour M5a) :
   à factoriser (fonction générique prenant une fonction d'erreur).
 - M5a : tableau des modèles d'orbite/chocs sans sélecteur de solveur par modèle (les 5 solveurs partagent le modèle choisi) ; le plan est dessiné en fil de fer,
   une rampe pleine (triangles) donnerait une meilleure lecture. Frottement de roulement, frottement visqueux non linéaire (quadratique) : absents.
@@ -260,6 +287,10 @@ numériques par tableau), `wrapped`, `Events.hpp`. Préparer M6 (corps rigide : 
 - `ProjectileModule` n'utilise pas encore `StepClock` ni `World` de la même façon que les autres modules.
 - Absents : type `Tensor` (relativité), backend GPU / compute shaders, export de données (niveau 6), tableau périodique, constantes
   fondamentales et convertisseur d'unités en interface.
+- M5c : billes suspendues (force de rappel g/L, vrai berceau) et contact linéaire « ressort » pour comparaison : non faits (bonus du plan) ; chaîne 1D seulement (pas de choc oblique) ;
+  billes dessinées en fil de fer (cercles) ; un seul modèle d'amortissement (Hunt-Crossley) ; l'issue de référence de Hertz est calculée à chaque `reset()` (RK45 serré, quelques ms) ;
+  l'étude de convergence du module recalcule 28 références à chaque changement de paramètre quand « Analyse » est visible ; le texte du niveau 6 cite Nesterenko (1983, onde solitaire de
+  la chaîne de Hertz) de mémoire : non vérifié ici ; les textes des niveaux 2 à 4 n'ont pas été relus à l'écran. `tests/test_core.cpp` dépasse 2500 lignes : à scinder par domaine.
 - Une fenêtre console s'ouvre à côté de l'application (à masquer en Release sous Windows).
 - Dans le tableau d'invariants du niveau 6, certains libellés sont abrégés (« Euler sympl. »).
 - Identité Git : `user.name` vaut `Noa-biy11` alors que le login GitHub est `Noa11-biy` (à corriger si l'utilisateur le souhaite).
@@ -269,5 +300,5 @@ numériques par tableau), `wrapped`, `Events.hpp`. Préparer M6 (corps rigide : 
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges),
 > puis `README.md`. Vérifie que ça compile et que les tests passent (section 5), puis présente-moi la feuille de route courte du
-> module M5c (berceau de Newton : impulsions séquentielles contre contact de Hertz ; M5a frottement sec et M5b chocs et rebonds sont faits ; la section 6 en donne le brouillon) avant de coder.
+> module M6 (corps rigide : quaternions, solide libre, toupie ; M5 collisions et frottements est terminé ; la section 6 en donne le brouillon) avant de coder.
 > Réponses courtes pendant le module, en français.
