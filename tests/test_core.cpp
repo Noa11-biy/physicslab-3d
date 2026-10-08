@@ -9,6 +9,7 @@
 #include "physicslab/core/Solver.hpp"
 #include "physicslab/core/Vec3.hpp"
 #include "physicslab/core/World.hpp"
+#include "physicslab/mechanics/Projectile.hpp"
 
 namespace {
 
@@ -149,6 +150,116 @@ void testFreeFall() {
     CHECK_NEAR(i0.angularMomentum.z, m * (0.0 * 8.0 - 10.0 * 3.0), 1e-12);
 }
 
+// --- M1 : projectile avec frottement ---------------------------------------------------
+
+ProjectileProblem dragProblem() {
+    ProjectileProblem p;
+    p.position0 = {0.0, 2.0, 0.0};
+    p.velocity0 = {8.0, 11.0, 0.0};
+    p.mass = 1.5;
+    p.linearDrag = 1.2;  // k = b/m = 0.8 1/s
+    return p;
+}
+
+void testProjectileAnalytic() {
+    ProjectileProblem none = dragProblem();
+    none.linearDrag = 0.0;
+
+    // Sans frottement : parabole r0 + v0 t + g t^2 / 2.
+    const double t = 1.7;
+    const Vec3 parabola = none.position0 + t * none.velocity0 + 0.5 * t * t * none.gravity;
+    CHECK_NEAR((none.position(t) - parabola).norm(), 0.0, 1e-12);
+
+    // Frottement infime : la forme exacte de phi/psi (0/0) doit rester stable et rejoindre la parabole.
+    ProjectileProblem tiny = none;
+    tiny.linearDrag = 1e-12;
+    CHECK_NEAR((tiny.position(t) - parabola).norm(), 0.0, 1e-9);
+
+    // Les deux branches (Taylor / forme exacte) se raccordent sans saut.
+    ProjectileProblem drag = dragProblem();
+    const double tSwitch = 1e-3 / (drag.linearDrag / drag.mass);
+    CHECK_NEAR((drag.position(tSwitch * 0.999999) - drag.position(tSwitch * 1.000001)).norm(), 0.0, 1e-4);
+
+    // La vitesse est bien la dérivée de la position (différence centrée).
+    const double h = 1e-5, t0 = 0.9;
+    const Vec3 fd = (drag.position(t0 + h) - drag.position(t0 - h)) / (2.0 * h);
+    CHECK_NEAR((fd - drag.velocity(t0)).norm(), 0.0, 1e-7);
+
+    // Vitesse limite : v_y -> -m g / b.
+    CHECK_NEAR(drag.velocity(60.0).y, -drag.mass * constants::g0 / drag.linearDrag, 1e-9);
+
+    // Durée de vol sans frottement : (vy + sqrt(vy^2 + 2 g h)) / g.
+    const double g = constants::g0, vy = none.velocity0.y, y0 = none.position0.y;
+    CHECK_NEAR(none.landingTime(), (vy + std::sqrt(vy * vy + 2.0 * g * y0)) / g, 1e-9);
+    CHECK_NEAR(drag.position(drag.landingTime()).y, 0.0, 1e-9);
+    CHECK(drag.landingTime() < none.landingTime());  // l'air raccourcit le vol
+}
+
+// Rapport d'erreur quand on double le nombre de pas : 2^ordre pour une méthode d'ordre `ordre`.
+double errorRatio(Solver& solver, const ProjectileProblem& p, int steps, double tEnd) {
+    return integrationError(p, solver, steps, tEnd) / integrationError(p, solver, 2 * steps, tEnd);
+}
+
+void testConvergenceOrders() {
+    const ProjectileProblem p = dragProblem();
+    const double tEnd = 1.5;
+
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    CHECK_NEAR(errorRatio(euler, p, 40, tEnd), 2.0, 0.15);       // ordre 1
+    CHECK_NEAR(errorRatio(symplectic, p, 40, tEnd), 2.0, 0.15);  // ordre 1
+    CHECK_NEAR(errorRatio(verlet, p, 40, tEnd), 4.0, 0.4);       // ordre 2
+    CHECK_NEAR(errorRatio(rk4, p, 10, tEnd), 16.0, 2.0);         // ordre 4
+
+    // À pas égal, plus l'ordre est élevé, plus l'erreur est petite.
+    const double eE = integrationError(p, euler, 30, tEnd);
+    const double eV = integrationError(p, verlet, 30, tEnd);
+    const double eR = integrationError(p, rk4, 30, tEnd);
+    CHECK(eR < eV);
+    CHECK(eV < eE);
+}
+
+void testPolynomialExactness() {
+    // Accélération constante : la solution est un polynôme de degré 2, Verlet et RK4 l'intègrent exactement.
+    ProjectileProblem p = dragProblem();
+    p.linearDrag = 0.0;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    SymplecticEuler symplectic;
+    CHECK(integrationError(p, verlet, 7, 1.0) < 1e-12);
+    CHECK(integrationError(p, rk4, 7, 1.0) < 1e-12);
+    CHECK(integrationError(p, symplectic, 7, 1.0) > 1e-3);  // Euler symplectique, lui, ne l'est pas
+
+    // Et l'énergie reste constante pour Verlet.
+    World w = p.makeWorld();
+    const double e0 = w.invariants().total();
+    for (int i = 0; i < 100; ++i) w.step(verlet, 0.05);
+    CHECK_NEAR(w.invariants().total(), e0, 1e-10);
+}
+
+void testRK45() {
+    const ProjectileProblem p = dragProblem();
+
+    auto run = [&](double relTol, double dt, RK45& solver) {
+        solver.relTol = relTol;
+        solver.absTol = relTol * 1e-2;
+        World w = p.makeWorld();
+        const double advanced = w.step(solver, dt);
+        CHECK_NEAR(advanced, dt, 1e-12);  // World::step couvre bien tout l'intervalle demandé
+        return (w.particles[0].position - p.position(w.time)).norm();
+    };
+
+    RK45 loose, tight;
+    const double eLoose = run(1e-4, 1.5, loose);
+    const double eTight = run(1e-10, 1.5, tight);
+    CHECK(eTight < eLoose);
+    CHECK(eTight < 1e-7);
+    CHECK(tight.acceptedSteps() > loose.acceptedSteps());  // tolérance plus fine => plus de pas
+    CHECK(tight.evaluations() >= 7 * tight.acceptedSteps());
+}
+
 }  // namespace
 
 int main() {
@@ -157,6 +268,10 @@ int main() {
     testQuaternion();
     testEulerOrder();
     testFreeFall();
+    testProjectileAnalytic();
+    testConvergenceOrders();
+    testPolynomialExactness();
+    testRK45();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");

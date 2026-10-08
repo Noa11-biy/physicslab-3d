@@ -1,4 +1,5 @@
-// Monde physique : un ensemble de particules ponctuelles dans un champ de pesanteur uniforme.
+// Monde physique : un ensemble de particules ponctuelles dans un champ de pesanteur uniforme,
+// avec un frottement visqueux linéaire optionnel (F = -b v).
 // Les modules suivants y brancheront d'autres forces ; l'interface Solver reste la même.
 #pragma once
 
@@ -30,9 +31,11 @@ class World {
 public:
     double time = 0.0;                                  // [s]
     Vec3 gravity{0.0, -constants::g0, 0.0};             // accélération de pesanteur [m/s^2]
+    double linearDrag = 0.0;                            // coefficient de frottement b [kg/s]
     std::vector<Particle> particles;
 
-    // Avance le monde d'un pas avec le solveur donné ; renvoie la durée avancée.
+    // Avance le monde de `dt` avec le solveur donné (en plusieurs sous-pas si le solveur
+    // est adaptatif) ; renvoie la durée avancée, égale à dt.
     double step(Solver& solver, double dt);
 
     Invariants invariants() const;
