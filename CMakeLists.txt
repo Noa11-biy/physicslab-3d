@@ -38,7 +38,9 @@ add_library(physicslab_core STATIC
     src/mechanics/DoublePendulum.cpp
     src/mechanics/Kepler.cpp
     src/mechanics/NBody.cpp
-    src/mechanics/Friction.cpp)
+    src/mechanics/Friction.cpp
+    src/mechanics/Collision.cpp
+    src/mechanics/Bounce.cpp)
 target_include_directories(physicslab_core PUBLIC include)
 physicslab_warnings(physicslab_core)
 
@@ -61,7 +63,8 @@ add_executable(physicslab
     src/app/DoublePendulumModule.cpp
     src/app/KeplerModule.cpp
     src/app/NBodyModule.cpp
-    src/app/FrictionModule.cpp)
+    src/app/FrictionModule.cpp
+    src/app/BounceModule.cpp)
 target_link_libraries(physicslab PRIVATE physicslab_core physicslab_render glfw imgui implot)
 target_compile_definitions(physicslab PRIVATE
     PHYSICSLAB_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")

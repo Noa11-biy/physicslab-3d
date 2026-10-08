@@ -9,8 +9,7 @@ struct AppOptions {
     // Niveau pédagogique au démarrage (1 à 6).
     int level = 3;
     // Simulation affichée au démarrage (1 = M1 projectile, 2 = M2 ressort-masse, 3 = M3 pendule simple, 4 = M3b pendule double,
-    // 5 = M4a orbite de Kepler, 6 = M4b problème à N corps,
-    // 7 = M5a frottement sec).
+    // 5 = M4a orbite de Kepler, 6 = M4b problème à N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds).
     int simulation = 1;
 };
 

@@ -12,6 +12,8 @@
 #include "physicslab/core/Solver.hpp"
 #include "physicslab/core/Vec3.hpp"
 #include "physicslab/core/World.hpp"
+#include "physicslab/mechanics/Bounce.hpp"
+#include "physicslab/mechanics/Collision.hpp"
 #include "physicslab/mechanics/DoublePendulum.hpp"
 #include "physicslab/mechanics/Friction.hpp"
 #include "physicslab/mechanics/Kepler.hpp"
@@ -1607,6 +1609,422 @@ void testInclineRegularized() {
     CHECK(y[0] < -5.0);
 }
 
+// --- M5b : chocs et rebonds --------------------------------------------------------------
+
+void testCollide1D() {
+    using collision::collide1D;
+    // e = 1, masses égales : les vitesses s'échangent, rien n'est perdu.
+    collision::Result1D r = collide1D(2.0, 3.0, 2.0, -1.0, 1.0);
+    CHECK_NEAR(r.v1, -1.0, 1e-15);
+    CHECK_NEAR(r.v2, 3.0, 1e-15);
+    CHECK_NEAR(r.energyLoss, 0.0, 1e-14);
+    // e = 0 : choc mou, vitesse commune = impulsion / masse totale.
+    r = collide1D(1.0, 4.0, 3.0, -2.0, 0.0);
+    CHECK_NEAR(r.v1, -0.5, 1e-15);
+    CHECK_NEAR(r.v2, -0.5, 1e-15);
+    // Mur (masse énorme) : v1' = -e v1, le mur ne bouge pas.
+    r = collide1D(1.0, 5.0, 1e12, 0.0, 0.6);
+    CHECK_NEAR(r.v1, -3.0, 1e-9);
+    CHECK_NEAR(r.v2, 0.0, 1e-11);
+    // Cas général : impulsion conservée, vitesse relative inversée et réduite par e, énergie perdue = 1/2 (1 - e^2) mu v_rel^2.
+    for (double e : {0.0, 0.3, 0.8, 1.0}) {
+        const double m1 = 1.7, v1 = 4.2, m2 = 0.6, v2 = -1.1;
+        const collision::Result1D c = collide1D(m1, v1, m2, v2, e);
+        CHECK_NEAR(m1 * c.v1 + m2 * c.v2, m1 * v1 + m2 * v2, 1e-13);
+        CHECK_NEAR(c.v1 - c.v2, -e * (v1 - v2), 1e-13);
+        const double mu = m1 * m2 / (m1 + m2), vRel = v1 - v2;
+        CHECK_NEAR(c.energyLoss, 0.5 * (1.0 - e * e) * mu * vRel * vRel, 1e-13);
+        CHECK_NEAR(0.5 * m1 * v1 * v1 + 0.5 * m2 * v2 * v2 - 0.5 * m1 * c.v1 * c.v1 - 0.5 * m2 * c.v2 * c.v2, c.energyLoss, 1e-12);
+    }
+    // Les corps s'éloignent déjà : pas de choc.
+    r = collide1D(1.0, 1.0, 1.0, 2.0, 0.5);
+    CHECK_NEAR(r.v1, 1.0, 0.0);
+    CHECK_NEAR(r.v2, 2.0, 0.0);
+    CHECK_NEAR(r.energyLoss, 0.0, 0.0);
+}
+
+void testCollideSpheres() {
+    using collision::collideSpheres;
+    const Vec3 n{0.6, 0.8, 0.0};
+    for (double e : {0.0, 0.5, 0.9, 1.0}) {
+        const double m1 = 1.3, m2 = 0.4;
+        const Vec3 v1{2.0, -1.0, 0.5}, v2{-1.5, 0.7, 0.2};
+        const collision::Result3D r = collideSpheres(m1, v1, m2, v2, n, e);
+        const double mu = m1 * m2 / (m1 + m2), vn = dot(v1 - v2, n);
+        CHECK(vn > 0.0);
+        CHECK_NEAR((m1 * r.v1 + m2 * r.v2 - m1 * v1 - m2 * v2).norm(), 0.0, 1e-14);   // impulsion conservée
+        CHECK_NEAR(dot(r.v1 - r.v2, n), -e * vn, 1e-14);                                // restitution de Newton
+        CHECK_NEAR((r.v1 - dot(r.v1, n) * n - (v1 - dot(v1, n) * n)).norm(), 0.0, 1e-14);  // tangentielles inchangées
+        CHECK_NEAR((r.v2 - dot(r.v2, n) * n - (v2 - dot(v2, n) * n)).norm(), 0.0, 1e-14);
+        CHECK_NEAR(r.impulse, (1.0 + e) * mu * vn, 1e-14);
+        CHECK_NEAR(r.energyLoss, 0.5 * (1.0 - e * e) * mu * vn * vn, 1e-14);
+        const double before = 0.5 * m1 * v1.norm2() + 0.5 * m2 * v2.norm2();
+        CHECK_NEAR(before - 0.5 * m1 * r.v1.norm2() - 0.5 * m2 * r.v2.norm2(), r.energyLoss, 1e-13);
+    }
+    // Deux billes égales, l'une au repos : à 90 degrés si e = 1 ; sinon v1'.v2' = (1 - e^2)/4 v_n^2 (angle aigu).
+    for (double alpha : {0.2, 0.7, 1.2}) {
+        const Vec3 normal{std::cos(alpha), std::sin(alpha), 0.0}, v1{3.0, 0.0, 0.0}, v2;
+        const double vn = dot(v1, normal);
+        for (double e : {1.0, 0.6}) {
+            const collision::Result3D r = collideSpheres(1.0, v1, 1.0, v2, normal, e);
+            CHECK_NEAR(dot(r.v1, r.v2), (1.0 - e * e) / 4.0 * vn * vn, 1e-14);
+        }
+    }
+    // Elles s'éloignent (v_n <= 0) : rien ne change.
+    const collision::Result3D apart = collideSpheres(1.0, {-1.0, 0.0, 0.0}, 2.0, {0.5, 0.0, 0.0}, {1.0, 0.0, 0.0}, 0.5);
+    CHECK_NEAR(apart.v1.x, -1.0, 0.0);
+    CHECK_NEAR(apart.v2.x, 0.5, 0.0);
+    CHECK_NEAR(apart.energyLoss, 0.0, 0.0);
+}
+
+void testTwoBallExact() {
+    // Choc frontal de deux billes égales (r = 0,5) : contact à t = 1 s (distance 4 - 1 = 3 m à 3 m/s), elles échangent leurs vitesses.
+    {
+        TwoBallProblem p;
+        p.p1 = {-4.0, 0.0, 0.0};
+        CHECK_NEAR(p.gap(p.initialState()), 3.0, 1e-15);
+        CHECK_NEAR(p.collisionTime(), 1.0, 1e-14);
+        const State at = p.exact(1.0);
+        CHECK_NEAR(at[0], -1.0, 1e-14);
+        const State after = p.exact(2.0);
+        CHECK_NEAR(after[0], -1.0, 1e-13);   // la bille 1 s'est arrêtée
+        CHECK_NEAR(after[2], 3.0, 1e-13);    // la bille 2 est partie à 3 m/s
+        CHECK_NEAR(after[4], 0.0, 1e-13);
+        CHECK_NEAR(after[6], 3.0, 1e-13);
+    }
+    // Choc oblique, e = 1 : le contact a lieu quand les centres sont à r1 + r2, les billes repartent à 90 degrés ; P et E conservées.
+    {
+        TwoBallProblem p;
+        p.p1 = {-4.0, 0.6, 0.0};
+        const double tc = p.collisionTime();
+        CHECK_NEAR(tc, (12.0 - 2.4) / 9.0, 1e-14);
+        const State at = p.exact(tc);
+        CHECK_NEAR(std::hypot(at[0] - at[2], at[1] - at[3]), 1.0, 1e-13);
+        CHECK_NEAR(p.gap(at), 0.0, 1e-13);
+        CHECK_NEAR(p.outgoingAngle(), constants::pi / 2.0, 1e-13);
+        const double e0 = p.kineticEnergy(p.initialState());
+        const Vec3 p0 = p.momentum(p.initialState());
+        for (double t : {0.5, 1.5, 3.0}) {
+            const State y = p.exact(t);
+            CHECK_NEAR(p.kineticEnergy(y), e0, 1e-13);
+            CHECK_NEAR((p.momentum(y) - p0).norm(), 0.0, 1e-13);
+        }
+        const State y = p.exact(3.0);
+        CHECK_NEAR(y[4] * y[6] + y[5] * y[7], 0.0, 1e-13);   // vitesses finales orthogonales
+    }
+    // Restitution e = 0,6, masses inégales : l'énergie perdue est celle de la formule ; l'angle n'est plus de 90 degrés.
+    {
+        TwoBallProblem p;
+        p.p1 = {-4.0, 0.6, 0.0};
+        p.m2 = 3.0;
+        p.restitution = 0.6;
+        const State before = p.initialState(), after = p.exact(4.0);
+        const Vec3 n = Vec3{p.exact(p.collisionTime())[2] - p.exact(p.collisionTime())[0], p.exact(p.collisionTime())[3] - p.exact(p.collisionTime())[1], 0.0}.normalized();
+        const double mu = p.m1 * p.m2 / (p.m1 + p.m2), vn = dot(p.v1 - p.v2, n);
+        CHECK_NEAR(p.kineticEnergy(before) - p.kineticEnergy(after), 0.5 * (1.0 - 0.36) * mu * vn * vn, 1e-13);
+        CHECK_NEAR((p.momentum(after) - p.momentum(before)).norm(), 0.0, 1e-13);
+    }
+    // Pas de choc : trajectoires qui se manquent, ou billes qui s'éloignent.
+    {
+        TwoBallProblem miss;
+        miss.p1 = {-4.0, 2.0, 0.0};
+        CHECK(std::isinf(miss.collisionTime()));
+        CHECK_NEAR(miss.exact(2.0)[0], 2.0, 1e-14);
+        TwoBallProblem apart;
+        apart.p1 = {-4.0, 0.0, 0.0};
+        apart.v1 = {-3.0, 0.0, 0.0};
+        CHECK(std::isinf(apart.collisionTime()));
+    }
+}
+
+void testBounceExact() {
+    const double g = constants::g0;
+    BounceProblem p;
+    p.restitution = 0.8;
+    p.y0 = 2.0;
+    p.vx0 = 1.5;
+    p.restSpeed = 1e-7;
+    const double e = p.restitution, h0 = 2.0, t0 = std::sqrt(2.0 * h0 / g);
+
+    // Première chute libre.
+    BounceState s = p.exact(0.5 * t0);
+    CHECK_NEAR(s.y, h0 - 0.5 * g * 0.25 * t0 * t0, 1e-13);
+    CHECK_NEAR(s.vy, -g * 0.5 * t0, 1e-13);
+    CHECK(s.bounces == 0 && !s.resting);
+
+    // Instants d'impact : t_n = t0 + 2 t0 e (1 - e^(n-1)) / (1 - e) ; sommet du n-ième rebond à t_n + e^n t0 : hauteur e^(2n) h0.
+    const std::vector<double> impacts = p.impactTimes(6);
+    CHECK(impacts.size() == 6);
+    for (int n = 1; n <= 6 && n <= static_cast<int>(impacts.size()); ++n)
+        CHECK_NEAR(impacts[n - 1], t0 + 2.0 * t0 * e * (1.0 - std::pow(e, n - 1)) / (1.0 - e), 1e-9);
+    for (int n = 1; n <= 5; ++n) {
+        s = p.exact(impacts[n - 1] + std::pow(e, n) * t0);
+        CHECK_NEAR(s.y, std::pow(e, 2 * n) * h0, 1e-9);
+        CHECK_NEAR(s.vy, 0.0, 1e-8);
+        CHECK(s.bounces == n);
+        CHECK_NEAR(s.vx, 1.5, 1e-15);   // sol lisse : la vitesse horizontale ne change pas
+    }
+
+    // Accumulation : la balle s'arrête de rebondir à t0 (1 + e) / (1 - e) (à l'effet du seuil près), puis glisse à vx constante.
+    const double tRest = t0 * (1.0 + e) / (1.0 - e);
+    CHECK_NEAR(p.restTime(), tRest, 1e-5);
+    s = p.exact(tRest + 3.0);
+    CHECK(s.resting);
+    CHECK_NEAR(s.y, 0.0, 0.0);
+    CHECK_NEAR(s.vy, 0.0, 0.0);
+    CHECK_NEAR(s.x, 1.5 * (tRest + 3.0), 1e-5);
+    for (double t : {0.3, 1.7, 4.0, tRest + 2.0}) CHECK_NEAR(p.exact(t).x, 1.5 * t, 1e-13);
+
+    // Restitution e = 0 : un seul choc, puis repos. e = 1 : jamais de repos, la balle remonte à la hauteur de départ.
+    BounceProblem soft = p;
+    soft.restitution = 0.0;
+    CHECK_NEAR(soft.restTime(), t0, 1e-12);
+    BounceProblem elastic = p;
+    elastic.restitution = 1.0;
+    CHECK(std::isinf(elastic.restTime()));
+    const std::vector<double> ei = elastic.impactTimes(4);
+    CHECK_NEAR(elastic.exact(ei[2] + t0).y, h0, 1e-9);
+    CHECK(!elastic.exact(50.0).resting);
+
+    // Départ du sol vers le haut, ou au repos sur le sol.
+    BounceProblem fromGround;
+    fromGround.y0 = 0.0;
+    fromGround.vy0 = 5.0;
+    fromGround.restitution = 0.5;
+    CHECK_NEAR(fromGround.impactTimes(1)[0], 2.0 * 5.0 / g, 1e-9);
+    BounceProblem lying;
+    lying.y0 = 0.0;
+    CHECK(lying.exact(3.0).resting);
+    CHECK_NEAR(lying.restTime(), 0.0, 0.0);
+
+    // Avec résistance k = 0,7 : vx(t) = vx0 e^{-kt} (vols ET repos), contact y = 0 aux instants d'impact, EDO du vol vérifiée
+    // par différences finies, vitesse de rebond = -e x vitesse d'impact.
+    BounceProblem drag = p;
+    drag.drag = 0.7;
+    const std::vector<double> di = drag.impactTimes(4);
+    for (double t : {0.2, 0.9, di[1] + 0.1, drag.restTime() + 1.0}) CHECK_NEAR(drag.exact(t).vx, 1.5 * std::exp(-0.7 * t), 1e-12);
+    for (double ti : di) CHECK_NEAR(drag.exact(ti).y, 0.0, 1e-12);
+    const double h = 1e-5;
+    for (double t : {0.3, di[0] + 0.15, di[1] + 0.1}) {
+        const BounceState c = drag.exact(t), up = drag.exact(t + h), dn = drag.exact(t - h);
+        CHECK_NEAR((up.y - dn.y) / (2.0 * h), c.vy, 1e-6);
+        CHECK_NEAR((up.vy - dn.vy) / (2.0 * h), -g - 0.7 * c.vy, 1e-5);
+        CHECK_NEAR((up.vx - dn.vx) / (2.0 * h), -0.7 * c.vx, 1e-5);
+    }
+    for (int n = 0; n < 3; ++n) {
+        const double vBefore = drag.exact(di[n] - 1e-9).vy, vAfter = drag.exact(di[n] + 1e-9).vy;
+        CHECK_NEAR(vAfter, -e * vBefore, 1e-7);
+    }
+}
+
+double fitSlope(const std::vector<double>& x, const std::vector<double>& y) {  // pente log-log par moindres carrés
+    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+    const double n = static_cast<double>(x.size());
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        const double lx = std::log10(x[i]), ly = std::log10(y[i]);
+        sx += lx; sy += ly; sxx += lx * lx; sxy += lx * ly;
+    }
+    return (n * sxy - sx * sy) / (n * sxx - sx * sx);
+}
+
+// Balle rebondissante, modèle « événement » : impact localisé exactement, repos décidé au même instant que la solution exacte.
+void testBounceEventDriven() {
+    const double g = constants::g0;
+    BounceProblem p;   // e = 0,8, chute de 2 m, restSpeed 1e-4
+    p.vx0 = 1.5;
+
+    // Sans résistance chaque vol est un polynôme : Verlet et RK4 sont exacts, même à travers l'accumulation de Zénon et le repos.
+    RK4 rk4;
+    VelocityVerlet verlet;
+    for (Solver* s : {static_cast<Solver*>(&rk4), static_cast<Solver*>(&verlet)}) {
+        BounceRun run(p, ContactModel::EventDriven);
+        double t = 0.0;
+        for (int i = 0; i < 800; ++i) {
+            run.advance(*s, 0.01);
+            t += 0.01;
+            if (i == 109 || i == 289 || i == 509 || i == 799) {   // t = 1,1 ; 2,9 ; 5,1 ; 8
+                const BounceState ex = p.exact(t);
+                CHECK_NEAR(run.state()[0], ex.x, 1e-11);
+                CHECK_NEAR(run.state()[1], ex.y, 1e-11);
+                CHECK_NEAR(run.state()[2], ex.vx, 1e-11);
+                CHECK_NEAR(run.state()[3], ex.vy, 1e-11);
+            }
+        }
+        CHECK(run.resting());
+        CHECK_NEAR(run.restTime(), p.restTime(), 1e-8);
+        CHECK(run.bounces() == p.exact(8.0).bounces);   // 50 rebonds avant le repos
+        CHECK_NEAR(run.state()[1], 0.0, 0.0);
+        CHECK_NEAR(run.state()[3], 0.0, 0.0);
+    }
+
+    // Avec résistance k = 0,7 : RK4 à dt = 0,02 reste à 1e-7 de la solution exacte pendant 6 s (rebonds, accumulation et repos compris).
+    BounceProblem drag = p;
+    drag.drag = 0.7;
+    {
+        BounceRun run(drag, ContactModel::EventDriven);
+        double worst = 0.0;
+        for (int i = 0; i < 300; ++i) {
+            run.advance(rk4, 0.02);
+            const BounceState ex = drag.exact(0.02 * (i + 1));
+            worst = std::max(worst, std::hypot(run.state()[0] - ex.x, run.state()[1] - ex.y));
+        }
+        CHECK(worst < 1e-7);   // mesuré : 3e-8 à dt = 0,05
+        CHECK(run.resting());
+    }
+
+    // Ordres des solveurs (erreur de position à t = 2,37 s, après 3 rebonds, dans un vol) : ceux des schémas, la discontinuité ayant disparu.
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    auto ratio = [&](Solver& s, int n) {
+        return bounceError(drag, ContactModel::EventDriven, s, n, 2.37) / bounceError(drag, ContactModel::EventDriven, s, 2 * n, 2.37);
+    };
+    CHECK_NEAR(ratio(euler, 1600), 2.0, 0.2);
+    CHECK_NEAR(ratio(symplectic, 1600), 2.0, 0.2);
+    CHECK_NEAR(ratio(verlet, 200), 4.0, 0.4);
+    CHECK_NEAR(ratio(rk4, 100), 16.0, 1.5);
+
+    // Régressions : la balle ne doit jamais traverser le sol, même quand les rebonds deviennent plus courts que le pas de calcul
+    // (cas d'un pas de 0,05 s alors que les derniers vols durent quelques millisecondes).
+    for (double dt : {0.05, 0.02, 0.007}) {
+        BounceRun run(drag, ContactModel::EventDriven);
+        double minY = 0.0;
+        for (int i = 0; i < static_cast<int>(std::lround(8.0 / dt)); ++i) {
+            run.advance(rk4, dt);
+            minY = std::min(minY, run.state()[1]);
+        }
+        CHECK(minY >= -1e-12);
+        CHECK(run.resting());
+        CHECK(run.bounces() == drag.exact(8.0).bounces);                 // 46 rebonds, comme la solution exacte
+        CHECK_NEAR(run.restTime(), drag.restTime(), 1e-5);               // mesuré : 2e-6 (dt = 0,05), 8e-8 (0,02), 2e-9 (0,007) : ordre 4
+    }
+
+    // Lancée du sol vers le haut, puis posée au sol dès le départ, puis e = 0.
+    BounceProblem launched;
+    launched.y0 = 0.0;
+    launched.vy0 = 5.0;
+    launched.restitution = 0.5;
+    {
+        BounceRun run(launched, ContactModel::EventDriven);
+        for (int i = 0; i < 120; ++i) run.advance(rk4, 0.01);   // t = 1,2 s : le premier impact (2 v0 / g = 1,02 s) a eu lieu
+        CHECK_NEAR(run.state()[1], launched.exact(1.2).y, 1e-11);
+        CHECK_NEAR(run.state()[3], launched.exact(1.2).vy, 1e-11);
+        CHECK(run.bounces() == 1 && launched.exact(1.2).bounces == 1);
+    }
+    BounceProblem lying;
+    lying.y0 = 0.0;
+    BounceRun still(lying, ContactModel::EventDriven);
+    still.advance(rk4, 0.5);
+    CHECK(still.resting());
+    CHECK_NEAR(still.state()[1], 0.0, 0.0);
+    BounceProblem soft;
+    soft.restitution = 0.0;
+    BounceRun mud(soft, ContactModel::EventDriven);
+    for (int i = 0; i < 100; ++i) mud.advance(rk4, 0.01);
+    CHECK(mud.resting());
+    CHECK_NEAR(mud.restTime(), std::sqrt(4.0 / g), 1e-9);
+    CHECK(mud.bounces() == 1);
+    (void)g;
+}
+
+// Modèle naïf (pas fixe, rebond appliqué après le pas) : le contact est vu trop tard, tous les schémas tombent à l'ordre 1,
+// et la balle ne s'arrête jamais. Mesures : voir PASSATION.
+void testBounceNaive() {
+    BounceProblem drag;   // e = 0,8, chute de 2 m
+    drag.vx0 = 1.5;
+    drag.drag = 0.7;
+    RK4 rk4;
+
+    // Pente log-log de l'erreur de position à t = 2,37 s en fonction du pas : ~ 1 pour le naïf (RK4 compris), ~ 4 pour l'événement.
+    const std::vector<int> counts = {50, 100, 200, 400, 800, 1600};
+    std::vector<double> dts, naive, evented;
+    for (int n : counts) {
+        dts.push_back(2.37 / n);
+        naive.push_back(bounceError(drag, ContactModel::Naive, rk4, n, 2.37));
+        evented.push_back(bounceError(drag, ContactModel::EventDriven, rk4, n, 2.37));
+    }
+    const double slopeNaive = fitSlope(dts, naive), slopeEvent = fitSlope(dts, evented);
+    CHECK(slopeNaive > 0.6 && slopeNaive < 1.4);     // mesuré : 0,94
+    CHECK(slopeEvent > 3.6 && slopeEvent < 4.4);     // mesuré : 4,0
+    // À pas égal (400) l'événement est plus de 100000 fois plus précis (mesuré : 1,5e-2 contre 7e-11).
+    CHECK(naive[3] > 1e5 * evented[3]);
+
+    // Le premier impact est vu au pas suivant (jamais avant), donc en retard de moins d'un pas.
+    {
+        BounceProblem p;
+        p.vx0 = 0.0;
+        const double tImpact = std::sqrt(4.0 / constants::g0), dt = 0.001;
+        BounceRun run(p, ContactModel::Naive);
+        double detected = -1.0;
+        for (int i = 0; i < 1000 && detected < 0.0; ++i) {
+            run.advance(rk4, dt);
+            if (run.bounces() == 1) detected = run.time();
+        }
+        CHECK(detected >= tImpact && detected < tImpact + dt);
+    }
+
+    // La balle naïve ne s'arrête jamais : bien après l'instant de repos exact elle rebondit encore, avec une vitesse de l'ordre de g dt,
+    // d'autant plus petite que le pas est petit ; la balle événement, elle, est posée à l'instant exact avec vy = 0.
+    BounceProblem lie;
+    lie.vx0 = 0.0;   // e = 0,8, restSpeed 1e-4
+    const double tRest = lie.restTime();
+    double previous = 1e9;
+    for (double dt : {0.02, 0.01, 0.005}) {
+        BounceRun naiveRun(lie, ContactModel::Naive), eventRun(lie, ContactModel::EventDriven);
+        double vMax = 0.0;
+        for (int i = 0; i < static_cast<int>(std::lround(8.0 / dt)); ++i) {
+            naiveRun.advance(rk4, dt);
+            eventRun.advance(rk4, dt);
+            if (naiveRun.time() > tRest + 0.5) vMax = std::max(vMax, std::abs(naiveRun.state()[3]));
+        }
+        CHECK(vMax > constants::g0 * dt);   // mesuré : 2,3 à 4 g dt
+        CHECK(vMax < previous);
+        previous = vMax;
+        CHECK(!naiveRun.resting());
+        CHECK(eventRun.resting());
+        CHECK_NEAR(eventRun.restTime(), tRest, 1e-8);
+    }
+}
+
+// Deux billes : hors choc le mouvement est rectiligne, donc TOUS les solveurs sont exacts ; l'erreur ne vient que de l'instant du contact.
+void testTwoBallContact() {
+    TwoBallProblem p;
+    p.p1 = {-4.0, 0.6, 0.0};
+    ExplicitEuler euler;
+    SymplecticEuler symplectic;
+    VelocityVerlet verlet;
+    RK4 rk4;
+    std::vector<Solver*> solvers = {&euler, &symplectic, &verlet, &rk4};
+
+    for (Solver* s : solvers) {
+        for (int n : {30, 120, 480}) CHECK(twoBallError(p, ContactModel::EventDriven, *s, n, 3.0) < 1e-12);  // mesuré : <= 8e-14
+    }
+    {
+        TwoBallRun run(p, ContactModel::EventDriven);
+        for (int i = 0; i < 300; ++i) run.advance(rk4, 0.01);
+        CHECK(run.collisions() == 1);
+        CHECK_NEAR(run.collisionTime(), p.collisionTime(), 1e-12);
+        CHECK_NEAR(run.time(), 3.0, 1e-12);
+    }
+
+    // Naïf : même erreur pour les quatre solveurs (ordre 1 pour tous, RK4 compris) : proportionnelle au pas (x 4 pour un pas 4 fois plus grand).
+    for (Solver* s : solvers) {
+        const double coarse = twoBallError(p, ContactModel::Naive, *s, 60, 3.0), fine = twoBallError(p, ContactModel::Naive, *s, 240, 3.0);
+        CHECK(coarse / fine > 3.5 && coarse / fine < 4.8);          // mesuré : 4,2
+        CHECK_NEAR(coarse, twoBallError(p, ContactModel::Naive, euler, 60, 3.0), 1e-12);
+    }
+    CHECK(twoBallError(p, ContactModel::Naive, rk4, 480, 3.0) > 1e-3);   // mesuré : 2,5e-2
+
+    // Le contact naïf est détecté au pas suivant, en retard de moins d'un pas ; l'impulsion totale est tout de même conservée.
+    {
+        TwoBallRun run(p, ContactModel::Naive);
+        for (int i = 0; i < 300; ++i) run.advance(rk4, 0.01);
+        CHECK(run.collisions() == 1);
+        CHECK(run.collisionTime() >= p.collisionTime() && run.collisionTime() < p.collisionTime() + 0.01 + 1e-12);
+        const State y = run.state();
+        CHECK_NEAR((p.momentum(y) - p.momentum(p.initialState())).norm(), 0.0, 1e-13);
+    }
+}
+
 void testPeriapsisTracker() {
     // Solution exacte échantillonnée grossièrement (50 points par période, décalés pour ne pas tomber pile sur un
     // périastre) : exactement 5 périastres sur 5,3 périodes, tous à l'angle 0 (orbite fermée, pas de précession).
@@ -1693,6 +2111,13 @@ int main() {
     testInclineEventDriven();
     testInclineNaive();
     testInclineRegularized();
+    testCollide1D();
+    testCollideSpheres();
+    testTwoBallExact();
+    testBounceExact();
+    testBounceEventDriven();
+    testBounceNaive();
+    testTwoBallContact();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");
