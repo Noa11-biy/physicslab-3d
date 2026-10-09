@@ -1,0 +1,37 @@
+#version 450
+// M7 : pas d'intégration élément par élément du schéma kick-drift-kick (Verlet des vitesses), voir GpuNBody.hpp.
+//
+//   v_i += a_i * uDtKick       (coup de pied : les accélérations a_i viennent de nbody.comp)
+//   x_i += v_i * uDtDrift      (dérive)
+//
+// Un pas complet = [demi-coup] [dérive] [accélérations au nouveau point] [demi-coup] ; deux pas consécutifs fusionnent les deux
+// demi-coups en un coup entier. GpuNBody ajoute avant la compilation : #define WG <threads par groupe>, #define GPU_DOUBLE si besoin.
+
+#ifdef GPU_DOUBLE
+#define real double
+#define vec4r dvec4
+#else
+#define real float
+#define vec4r vec4
+#endif
+
+layout(local_size_x = WG) in;
+
+layout(std430, binding = 0) buffer Bodies { vec4r body[]; };                 // (x, y, z, masse), position mise à jour
+layout(std430, binding = 1) readonly buffer Accel { vec4r accel[]; };        // (ax, ay, az, 0)
+layout(std430, binding = 2) buffer Velocities { vec4r velocity[]; };         // (vx, vy, vz, 0)
+
+uniform int uCount;
+uniform real uDtKick;
+uniform real uDtDrift;
+
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= uint(uCount)) return;
+    vec4r v = velocity[i];
+    v.xyz += accel[i].xyz * uDtKick;
+    velocity[i] = v;
+    vec4r b = body[i];
+    b.xyz += v.xyz * uDtDrift;
+    body[i] = b;
+}

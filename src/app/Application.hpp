@@ -6,6 +6,10 @@ namespace pl {
 struct AppOptions {
     // Ouvre une fenêtre cachée, rend quelques images et quitte (0 = succès). Sert aux vérifications automatiques.
     bool smokeTest = false;
+    // Ouvre une fenêtre cachée, compare le calcul GPU des N corps (M7) au CPU et mesure les temps (0 = succès).
+    bool gpuTest = false;
+    // Plus grand nombre de corps des mesures de temps de --gpu-test.
+    int gpuMaxN = 16000;
     // Niveau pédagogique au démarrage (1 à 6).
     int level = 3;
     // Simulation affichée au démarrage (1 = M1 projectile, 2 = M2 ressort-masse, 3 = M3 pendule simple, 4 = M3b pendule double,

@@ -49,7 +49,8 @@ physicslab_warnings(physicslab_core)
 # --- Rendu OpenGL (découplé de la physique) ---
 add_library(physicslab_render STATIC
     src/render/Camera.cpp
-    src/render/Renderer.cpp)
+    src/render/Renderer.cpp
+    src/render/GpuNBody.cpp)
 target_include_directories(physicslab_render PUBLIC include)
 target_link_libraries(physicslab_render PUBLIC glad)
 physicslab_warnings(physicslab_render)
@@ -59,6 +60,7 @@ add_executable(physicslab
     src/app/main.cpp
     src/app/Application.cpp
     src/app/UiCommon.cpp
+    src/app/GpuTest.cpp
     src/app/ProjectileModule.cpp
     src/app/OscillatorModule.cpp
     src/app/PendulumModule.cpp
@@ -81,4 +83,10 @@ if(PHYSICSLAB_BUILD_TESTS)
     target_link_libraries(test_core PRIVATE physicslab_core)
     physicslab_warnings(test_core)
     add_test(NAME core COMMAND test_core)
+
+    # Test GPU (M7) : exige un pilote OpenGL 4.5 avec compute shaders, donc désactivé par défaut (machines sans écran, intégration continue).
+    option(PHYSICSLAB_GPU_TESTS "Ajouter le test GPU (--gpu-test) à ctest" OFF)
+    if(PHYSICSLAB_GPU_TESTS)
+        add_test(NAME gpu COMMAND physicslab --gpu-test)
+    endif()
 endif()
