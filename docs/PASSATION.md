@@ -1,7 +1,7 @@
 # Passation : PhysicsLab 3D
 
 Ce fichier permet de reprendre le projet dans une nouvelle conversation sans rien perdre. À lire en entier avant de coder.
-Dernière mise à jour : fin de M7 (Mécanique : M0 à M7 terminés, dont le N-corps GPU), branche `module/mecanique`. Prochaine étape : les livrables de fin de domaine Mécanique (section 6), puis merge dans `main` et tag `mecanique-1` (à confirmer avec l'utilisateur).
+Dernière mise à jour : fin du domaine Mécanique (M0 à M7 terminés, dont le N-corps GPU ; devlog, cours, roue des domaines et prompt de reprise livrés), branche `module/mecanique`. Prochaine étape : merge dans `main` et tag `mecanique-1` (à confirmer avec l'utilisateur), puis le domaine suivant choisi avec la roue (proposition : Ondes).
 
 ## 1. Rôle et règles de travail
 
@@ -188,6 +188,7 @@ src/core, src/mechanics, src/render   implémentations
 src/app/       Application (fenêtre, thème, disposition, menu, boucle), SimulationModule (interface),
                UiCommon (SolverSet, StepClock, drawResultTable, Series, sliders), un module par simulation ; GpuTest (`--gpu-test`, validation GPU/CPU), GpuNBodyModule (`--sim 11`)
 tools/         screenshot.ps1 (capture automatique) ; cours/ (générateur du cours Word et PDF : texte, mise en page, figures, calcul des corrigés)
+docs/          PASSATION.md, devlog/ (un fichier par module), cours/ (Word et PDF), roue-des-domaines.html (page autonome : les 9 domaines, ce qui est prêt, briques à construire, cas de référence, prompt de reprise à copier ; à ouvrir dans un navigateur)
 shaders/       line.vert, line.frag, nbody.comp (accélérations + potentiel), nbody_step.comp (coup de pied et dérive)
 tests/         test_core.cpp (un seul exécutable, CHECK/CHECK_NEAR maison)
 third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; glad généré (GL 4.5 core) versionné
@@ -311,14 +312,16 @@ niveaux 1, 3, 5 et 6 d'un nouveau module, et un ancien module pour la non-régre
 Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
 6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton, 10 = M6 corps rigide, 11 = M7 N corps sur GPU), `--smoke-test`, `--gpu-test [--gpu-max-n N]` (temps jusqu'à N ; 16000 par défaut, 200000 pour le débit maximal ; option CMake `PHYSICSLAB_GPU_TESTS` pour l'ajouter à ctest). Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
 
-## 6. Suite : livrables de fin de domaine Mécanique (M0 à M7 terminés)
+## 6. Suite : fin du domaine Mécanique (M0 à M7 terminés ; livrables 1 à 4 faits, reste le merge et le tag)
 
 À faire dans l'ordre, en validant chaque livrable avec l'utilisateur (règle de fin de domaine, section 1) :
 1. **Devlog complet : FAIT** dans `docs/devlog/` (un fichier par module M0 à M7 et un index `README.md` : chronologie, méthode, ordres mesurés, tableau « ce que la mesure a corrigé », comment revérifier). Les chiffres viennent de la section 2 et des journaux de `--gpu-test` ; quatre valeurs clés ont été recalculées sur le code. À tenir à jour si un chiffre change.
 2. **Cours compilé : FAIT** dans `docs/cours/` (`La-mecanique-par-la-simulation.docx` et `.pdf`, 75 pages, environ 27 000 mots) : 7 chapitres, chacun en **six niveaux** (N1 à N6) + « Dans le logiciel » (captures réelles) + exercices rangés par niveau (**64 exercices corrigés**, annexe A) + « À retenir » ; avant-propos, table des matières (champ Word avec numéros de page), conclusion en dix idées, glossaire, formulaire, annexe logiciel, références ; vraies équations Word (OMML) ; figures tracées avec les solveurs du projet. Le générateur est dans `tools/cours/` (voir son README : les pièges de la conversion LibreOffice y sont notés).
-3. **Roue des domaines** pour choisir le module suivant (Ondes, Thermodynamique, Électrodynamique, Fluides, Plasma, Atomique/Quantique/Nucléaire, Relativité/Astro/Cosmologie, Appliqués).
-4. **Prompt de reprise court** prêt à copier (section 8 à jour).
-5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1`** : actions visibles sur le dépôt public, à confirmer avec l'utilisateur avant de les faire.
+3. **Roue des domaines : FAIT** dans `docs/roue-des-domaines.html` (page autonome, sans serveur ; thème clair/sombre, lisible sur téléphone). Neuf secteurs dans l'ordre prévu ; pour chacun : pourquoi à cette place, ce qui est déjà prêt dans le code, briques à construire, premières simulations avec cas de référence, difficulté et nombre de modules **estimés**, dépendances, prompt de reprise à copier. Proposition : **Ondes** en premier. Quatre « raccourcis » hors ordre (dynamique moléculaire de Lennard-Jones, attracteur de Lorenz, circuit RLC, précession relativiste de Mercure). Les valeurs de référence citées viennent de la littérature (certaines de mémoire) et ne sont pas des mesures du logiciel : les revérifier au moment du module. Pour modifier la roue : le tableau `D` (domaines) et `SHORT` (raccourcis) au début du script de la page.
+4. **Prompt de reprise court : FAIT** (section 8 : il fonctionne tel quel et la roue en donne une version par domaine).
+5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1`** : actions visibles sur le dépôt public, à confirmer avec l'utilisateur avant de les faire (pas encore faits).
+
+**À prévoir plus tard (demande de l'utilisateur, seulement notée, pas écrite) :** une **notice d'utilisation du logiciel** : comment il marche (les six niveaux, la navigation 3D, les panneaux, les curseurs, les options `--level` / `--sim`), pensée pour des élèves et des non-initiés. À faire quand le logiciel aura plusieurs domaines ; à placer dans `docs/` (par exemple `docs/notice/`), à distinguer du cours qui explique la physique.
 
 ## 7. Dette technique et idées
 
@@ -344,6 +347,7 @@ Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3
   par le CPU pour le dessin (un rendu direct depuis le SSBO demanderait de modifier le `Renderer`) ; pas d'arbre (Barnes-Hut) : O(N²) ; pas de disque galactique ni de masses inégales dans le module ; N <= 20000 sur GPU et 4000 sur CPU ; la comparaison
   GPU/CPU du panneau Analyse n'est automatique que jusqu'à 1500 étoiles et se limite à 4000 (O(N²) double sur le CPU) ; le banc d'essai bloque l'interface quelques secondes (6 en Debug) ; le double GPU n'est utilisable que sur une carte qui le calcule
   vraiment ; l'énergie du GPU (N > 4000) est estimée en float par le shader ; les textes des niveaux 2 et 3 de M7 ne sont pas relus à l'écran (niveaux 1, 4, 5, 6 vus) ; `computeConvergence` n'existe pas pour M7 (pas de solveurs multiples).
+- Notice d'utilisation du logiciel (comment il marche) : à écrire plus tard, seulement notée pour l'instant (voir la fin de la section 6).
 - README : annonçait « MSYS2 UCRT64 » alors que la chaîne réelle est mingw64 (corrigé).
 - Une fenêtre console s'ouvre à côté de l'application (à masquer en Release sous Windows).
 - Dans le tableau d'invariants du niveau 6, certains libellés sont abrégés (« Euler sympl. »).
@@ -353,5 +357,7 @@ Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3
 ## 8. Prompt de reprise (à coller dans la nouvelle conversation)
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges), puis `README.md`. Vérifie que ça compile et que les tests passent (section 5, y compris `--gpu-test`).
-> La Mécanique est terminée (M0 à M7) ; le devlog (`docs/devlog/`) et le cours (`docs/cours/`) sont faits. Il reste la roue des domaines et le prompt de reprise court, puis, seulement après mon accord, le merge de `module/mecanique` dans `main` et le tag `mecanique-1`.
-> Réponses courtes, en français.
+> La Mécanique est terminée (M0 à M7) ; le devlog (`docs/devlog/`), le cours (`docs/cours/`) et la roue des domaines (`docs/roue-des-domaines.html`) sont faits. Il reste le merge de `module/mecanique` dans `main` et le tag `mecanique-1`, seulement après mon accord (si ce n'est pas déjà fait, vérifie avec `git branch --show-current` et `git tag`).
+> Ensuite, présente-moi la feuille de route courte du domaine « Ondes » (concepts, équations, difficultés, simulations, cas de référence) avant de coder. Réponses courtes, en français.
+>
+> Pour un autre domaine, remplace « Ondes » par son nom : la roue des domaines donne le prompt prêt à copier pour chacun.
