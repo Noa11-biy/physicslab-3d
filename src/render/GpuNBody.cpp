@@ -378,6 +378,23 @@ void GpuNBody::readState(double* positions, double* velocities) const {
     }
 }
 
+double GpuNBody::potentialEnergy() const {
+    if (!program_ || n_ <= 0 || !accelValid_) return 0.0;
+    double u = 0.0;
+    if (precision_ == GpuPrecision::Double) {
+        std::vector<double> acc(4 * static_cast<std::size_t>(n_)), body(acc.size());
+        glGetNamedBufferSubData(accel_, 0, static_cast<GLsizeiptr>(acc.size() * sizeof(double)), acc.data());
+        glGetNamedBufferSubData(bodies_, 0, static_cast<GLsizeiptr>(body.size() * sizeof(double)), body.data());
+        for (int i = 0; i < n_; ++i) u += body[4 * i + 3] * acc[4 * i + 3];
+    } else {
+        std::vector<float> acc(4 * static_cast<std::size_t>(n_)), body(acc.size());
+        glGetNamedBufferSubData(accel_, 0, static_cast<GLsizeiptr>(acc.size() * sizeof(float)), acc.data());
+        glGetNamedBufferSubData(bodies_, 0, static_cast<GLsizeiptr>(body.size() * sizeof(float)), body.data());
+        for (int i = 0; i < n_; ++i) u += static_cast<double>(body[4 * i + 3]) * static_cast<double>(acc[4 * i + 3]);
+    }
+    return 0.5 * u;
+}
+
 void GpuNBody::accelerations(const double* positions, const double* masses, int n, double G, double softening, double* acc) {
     setBodies(positions, masses, n);
     compute(G, softening);

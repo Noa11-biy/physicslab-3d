@@ -35,6 +35,10 @@ public:
 private:
     unsigned int vao_ = 0;
     unsigned int vbo_ = 0;
+    // Tampon de flux : chaque dessin écrit ses sommets à la suite des précédents (décalage remis à 0 à chaque image) ; il n'est
+    // ré-alloué que s'il devient trop petit. Ré-allouer à chaque dessin faisait disparaître les points sur Intel UHD (M7).
+    long long vboCapacity_ = 0;
+    long long vboOffset_ = 0;
     unsigned int program_ = 0;
     int uViewProj_ = -1;
     int uPointSize_ = -1;

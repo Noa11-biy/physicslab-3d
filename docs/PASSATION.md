@@ -1,7 +1,7 @@
 # Passation : PhysicsLab 3D
 
 Ce fichier permet de reprendre le projet dans une nouvelle conversation sans rien perdre. À lire en entier avant de coder.
-Dernière mise à jour : fin de M6 (Mécanique : M0 à M6 terminés : frottement sec, chocs et rebonds, berceau de Newton, corps rigide), branche `module/mecanique`. Prochaine étape : M7 N-corps GPU, dernier module de la Mécanique (brouillon de feuille de route en section 6, l'utilisateur ne l'a pas encore validé) ; ensuite les livrables de fin de domaine.
+Dernière mise à jour : fin de M7 (Mécanique : M0 à M7 terminés, dont le N-corps GPU), branche `module/mecanique`. Prochaine étape : les livrables de fin de domaine Mécanique (section 6), puis merge dans `main` et tag `mecanique-1` (à confirmer avec l'utilisateur).
 
 ## 1. Rôle et règles de travail
 
@@ -47,7 +47,7 @@ Moléculaire, Information quantique, Particules, Géophysique, Météo, Biophysi
 | M5b | Chocs et rebonds (restitution, balle rebondissante et accumulation de Zénon, choc de deux billes) | fait |
 | M5c | Berceau de Newton (contact de Hertz contre impulsions séquentielles, `--sim 9`) | fait |
 | M6 | Corps rigide (solide libre symétrique et asymétrique, toupie de Lagrange, 4 intégrateurs d'orientation, `--sim 10`) | fait |
-| **M7** | **N-corps GPU en compute shader (écart CPU/GPU)** | **à faire (suite logique, dernier module de la Mécanique)** |
+| M7 | N-corps GPU en compute shader (écart CPU/GPU, kick-drift-kick sur GPU, `--sim 11`, `--gpu-test`) | fait |
 
 Dépôt : https://github.com/Noa11-biy/physicslab-3d (public, licence MIT). Branche de travail : `module/mecanique`
 (fin de domaine : merge dans `main` puis tag `mecanique-1`). Conventions de commit : `feat(mecanique): ...`, `fix:`, `docs:`,
@@ -145,6 +145,25 @@ module quand l'utilisateur le demande ou continue la chaîne (c'était son souha
   fixé au pivot. **Intégrateurs avec couple** (nutation, 100 s à h = 0,005) : découpage ΔL_z/L_z = 2,8e-13 (le couple n'a pas de composante verticale : les « coups » ne la changent pas), ΔE/E 3,9e-5 borné, ΔL_3/L_3 2,8e-5 (L_3 n'est PAS exact) ;
   RK4 ΔL_z/L_z 5,1e-6, ΔE/E 7,5e-7 (à ce pas RK4 conserve mieux E sur 100 s) ; Heun ΔL_z/L_z 7,5e-3, ΔE/E 2,3e-3 ; Euler diverge. Précession régulière (θ = 0,8, ω3 = 25) sur 10 s en 2000 pas : distance à l'exact RK4 5,0e-5, découpage 2,0e-4,
   Heun 8,2e-3 ; cos θ : écart 1,3e-6 / 8e-6 / 8,8e-4.
+- **N corps sur GPU (M7)**, carte Intel UHD (OpenGL 4.5, pilote 31.0.101.3962). Les temps varient d'une exécution à l'autre (CPU et carte intégrée se partagent la puissance : le CPU est passé de 0,33 à
+  0,11-0,14 Ginteractions/s entre deux séries) ; les précisions, elles, sont reproductibles à l'identique. **Accélérations à état fixé**, GPU `float` contre CPU `double`, écart global ||Δa||/||a|| : 1,6e-8 (huit, N = 3),
+  1,3e-8 (Lagrange), 2,7e-7 (N = 100), 4,7e-7 (1000), 1,05e-6 (5000), pire étoile 3,4e-6 à N = 5000 : environ 5e-8 √N (une somme de N termes arrondis donne u √N). Seuil du test : 5e-8 (3 + √N). GPU `double` : 3e-16
+  (N <= 1000). Force totale relative |Σ m a| / Σ m|a| : 1 à 2e-8 en float (1e-17 au CPU). **Centrage sur le barycentre en double avant la conversion** : amas de 1000 corps décalé de (1000, -2000, 500), écart 4,7e-7 avec contre
+  1,6e-4 sans (x 345) ; sans centrage l'erreur vient de l'arrondi des positions. Énergie potentielle sommée dans le shader (φ_i rangé en 4e composante des accélérations, U = ½ Σ m φ) : écart relatif 5e-9 à 4,3e-7 en float (6e-7 sans
+  centrage), 1e-15 en double. **Groupe de travail** (N = 16384) : 32 : 17,7 ms ; 64 : 10,0 ; 128 : 9,2 ; 256 : 8,35 ; 512 : 8,33 ; 1024 : 9,0 ; 256 retenu. **Débit GPU float** : 5 Ginteractions/s (N = 1000), 17,7 (4000), 28 (8000),
+  33 (32000), 30 (100000 : 0,34 s), 21 (200000 : 1,9 s) ; CPU double (Release) 0,11 à 0,33 Ginteractions/s (N² interactions ordonnées) : GPU 80 à 150 fois plus rapide à N = 16000 (8,1 à 13 ms contre 0,77 à 1,98 s).
+  **Le double du shader est émulé par le pilote** : 2,9e6 interactions/s (0,35 s à N = 1000, 1,4 s à 2000, 22 s à 8000), soit mille à plusieurs milliers de fois moins que le float, et 100 fois moins que le CPU : il sert seulement à valider
+  la logique. **Intégration kick-drift-kick sur GPU** : GPU double = CPU Verlet à 7,2e-16 après 20 pas du huit (déjà 8,3e-17 entre deux découpages en lots) ; GPU float 2,2e-7. Dérives maximales GPU float (CPU double entre parenthèses) :
+  huit, 5 périodes : E 2,0e-6 (1,4e-10), P 2,2e-6 (2e-15), L 1,3e-6 (1e-14) ; amas N = 100, t = 20 (dt = 1e-3, 20000 pas) : E 1,0e-6 (7,9e-7), P 4,9e-7 (6e-16), L 2,9e-6 (3e-15) ; N = 500, t = 1 : E 4,1e-7 (3,8e-7), P 1,8e-8,
+  L 3,3e-8 ; N = 5000, t = 1 : E 2,5e-7, P 5,5e-9, L 4,9e-9. L'énergie dérive donc autant que l'erreur propre du schéma d'ordre 2 (le float n'y ajoute presque rien) ; P et L, exacts à l'arrondi en double, dérivent de 5e-9 à 3e-6 en float
+  (le brouillon prévoyait 1e-7 par pas : faux, bien moins). **Écart de trajectoire GPU float / CPU double** : huit (régulier) 4,3e-5 après 1 période puis 7,2e-5, 1,0e-4, 1,6e-4, 2,0e-4 à 5 périodes (croissance linéaire : le bruit d'arrondi des
+  mises à jour de v et x est amplifié par le cisaillement de l'orbite) ; amas N = 100 (chaotique, λ ~ 1) : 3,9e-5 (t = 2), 2,7e-4 (4), 2,9e-3 (6), 2,5e-2 (8), 0,16 (10), 1,1 (12), 4,0 (14), 9,0 (16), 13,8 (20 : saturé) ; N = 500, t = 1 : 2,0e-5.
+  **Temps par pas** (une évaluation de force par pas côté GPU, requêtes de temps regroupées par lots) : 53-89 µs à N = 3 et 100 (CPU Verlet du Solver : 60 à 152 µs), 181-283 µs à N = 500 (CPU 1,5 à 3,8 ms : le Verlet du Solver évalue la force deux
+  fois par pas), 1,5 ms à N = 5000 ; avant le regroupement des requêtes : 308, 717 et 1920 µs (une lecture bloquante par envoi coûtait 130 à 350 µs par pas). **Sphère de Plummer** (`NBodyProblem::plummer`, méthode d'Aarseth-Hénon-Wielen, rayons
+  limités à 10 a) : N = 4000, ε = 0 : E = -0,1505 (7 graines : -0,147 à -0,159, moyenne -0,152 contre -3π/64 = -0,1473 : la troncature creuse un peu le puits), 2T/|U| = 0,995 (0,96 à 1,00), rayon de demi-masse 1,307 (1,264 à 1,330 contre 1,3048) ;
+  échelle a = 2 : E / 2 et rayons x 2 exactement ; N = 500, 500 pas de 0,01 : rayon de demi-masse +3,4 %, dE/E 4e-7 ; collision de deux sphères (N = 2000) : P = 1e-16, E = -0,148 (attendu -0,144). **Module `--sim 11`** (N = 2000, Debug) : GPU 1,5 ms par
+  pas dont 1,2 ms de calcul pur (le reste : attente, la carte dessine aussi), 655 pas/s ; mode « les deux » : CPU 63,6 ms par pas (build Debug) contre 2,5 ms, soit 25 fois ; écart GPU - CPU 2,9e-5 après quelques unités de temps ; histogramme d'erreur
+  centré sur 5e-7 (maximum 2,1e-6).
 
 ## 3. Architecture du code
 
@@ -161,12 +180,14 @@ include/physicslab/
                RigidBody (inertia:: sphere/box/cylinder ; RotationState = (q, ω corps) et état plat [q | ω] de 7 nombres ; rotationRhs avec couple optionnel ; FreeBodyProblem : exactSymmetric,
                exactAsymmetricOmega par jacobiSnCnDn, asymmetricPeriod, intermediateAxisGrowthRate, reference ; HeavyTopProblem : torque, steadyPrecession / exactSteady, nutation() (racines de la cubique) et
                nutationPeriod, sleepingCriticalSpin ; RotationIntegrator : EulerRotation, RK4Rotation(renormalize), LieHeunRotation, SplittingRotation ; integrateRotation, rotationDistance),
-               NBody (nbody::accelerations : interface « force sur chaque particule » découplée de l'intégrateur, reprise par le GPU en M7)
-  render/      Camera (orbitale, float), Renderer (OpenGL 4.5 DSA : lignes et points colorés)
+               NBody (nbody::accelerations : interface « force sur chaque particule » découplée de l'intégrateur, reprise par le GPU en M7 ; NBodyProblem::plummer / plummerCollision : sphères de
+               Plummer à l'équilibre en O(N), pour l'amas du module GPU)
+  render/      Camera (orbitale, float), Renderer (OpenGL 4.5 DSA : lignes et points colorés ; VBO de flux à décalage, voir pièges M7),
+               GpuNBody (M7 : accélérations O(N²) par tuiles + kick-drift-kick en SSBO, float ou double, centrage sur le barycentre, potentiel dans le shader, envois découpés à ~50 ms, requêtes de temps par lots)
 src/core, src/mechanics, src/render   implémentations
 src/app/       Application (fenêtre, thème, disposition, menu, boucle), SimulationModule (interface),
-               UiCommon (SolverSet, StepClock, drawResultTable, Series, sliders), un module par simulation
-shaders/       line.vert, line.frag
+               UiCommon (SolverSet, StepClock, drawResultTable, Series, sliders), un module par simulation ; GpuTest (`--gpu-test`, validation GPU/CPU), GpuNBodyModule (`--sim 11`)
+shaders/       line.vert, line.frag, nbody.comp (accélérations + potentiel), nbody_step.comp (coup de pied et dérive)
 tests/         test_core.cpp (un seul exécutable, CHECK/CHECK_NEAR maison)
 tools/         screenshot.ps1 (capture automatique pour vérifier l'interface)
 third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; glad généré (GL 4.5 core) versionné
@@ -240,6 +261,17 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
   (×16,06 pour RK4, ×4,00 pour les schémas d'ordre 2), contrairement au contact de Hertz de M5c. Un test de l'« ordre » de Euler n'est asymptotique qu'à pas fin (avec le couple de la toupie, 50 pas donnent NaN). La solution de Jacobi exige
   I1 < I2 < I3 et un départ (a, 0, c) avec a, c > 0 ; sans ω2(0) = 0 il faudrait l'intégrale elliptique incomplète de première espèce pour la phase (non écrite). Hypothèse fausse corrigée : une toupie sous le spin critique ne tombe
   pas (grande nutation, elle remonte).
+- **GPU / M7** : (1) **Une seule commande GPU de plus de ~2 s peut geler le pilote** (TDR de Windows) : le `double` du shader à N = 5000 (un seul envoi de 9 s) a bloqué le test plus de 2 minutes. Les envois sont donc découpés en ~50 ms,
+  taille calculée sur le débit mesuré (un seul groupe au premier envoi). Ne jamais lancer le double au-delà de N = 1000 sur cette carte (émulé, 2,9e6 interactions/s). (2) **Lire une requête GL_TIME_ELAPSED à chaque envoi bloque le CPU** (130 à 350 µs
+  par pas) : on empile les envois et on relit les temps par lots (au plus 0,25 s de travail empilé, 256 requêtes). (3) **Garde de division** : en ε = 0 le terme d'une étoile sur elle-même vaut 0 · ∞ = NaN si la garde (r² > 0) ne couvre pas tout le produit
+  (régression que `--gpu-test` a signalée aussitôt par des accélérations non finies sur le huit et le triangle de Lagrange : d'où l'intérêt de ses cas ε = 0). (4) **Le `Renderer` ré-allouait son VBO à chaque dessin (`glNamedBufferData`) : dès que d'autres tampons GL existaient (changer N, banc d'essai), les points quasi
+  disparaissaient (grille en lignes intacte, un point sur 2000, données et calcul sains, aucune erreur GL).** Trouvé par dichotomie (même `setBodies` seul le provoquait ; créer les tampons hors de la trame ImGui ne changeait rien). Remède : tampon de flux
+  persistant à décalage (4 Mio au moins, décalage remis à 0 par image, ré-allocation seulement si l'espace manque). Les autres modules ne sont pas affectés (vérifié M4b et M6 sur captures). (5) Compter les points visibles dans une capture
+  (PowerShell, `System.Drawing.Bitmap`, pixels de luminance > 330 dans la zone 3D) est un test automatique rapide d'un rendu cassé. (6) Test de validité : injecter volontairement des fautes dans le shader (facteur 1,0001 ou 1,002, remplissage de tuile
+  faux) doit faire échouer `--gpu-test` ; les shaders se lisent à l'exécution (pas de recompilation). (7) Compiler un build Release jeté dans le dossier temporaire prend environ 7 minutes la première fois (le dossier `build` est en Debug : CPU 5 à 10 fois plus lent,
+  ne pas y mesurer des temps CPU). (8) Dans l'outil Bash, `VAR=... && (cmd) &` met toute la chaîne en arrière-plan, affectation comprise : redéfinir la variable dans la commande suivante ; stdout redirigé est entièrement tamponné sous Windows (le test
+  utilise `setvbuf(_IONBF)`). (9) Le Verlet du `Solver` évalue la force deux fois par pas : sa comparaison avec le GPU (une évaluation) favorise le GPU d'un facteur 2 ; le module CPU garde l'accélération du dernier point (une évaluation).
+  (10) Glyphes vérifiés sur captures : Σ, ε, √, φ, ½, ←, ², ×, Δ, ≈.
 - **Interface** : la police Segoe UI n'a pas ∇ ni ∝ (affichés « � ») ; ∂, ᵀ, ω, √, ≈, Δ passent. Plus de 3 colonnes numériques dans « Invariants » (~400 px)
   écrasent la colonne « Méthode » : scinder en deux tableaux. `TextDisabled` ne passe pas à la ligne : utiliser `TextWrapped` colorée pour les notes.
 - **PowerShell 5.1** : `Get-Content -Raw | Set-Content -Encoding utf8` ré-encode les accents (mojibake) et ajoute un BOM. Éditer avec l'outil Edit, ou avec
@@ -269,43 +301,24 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
 ```bash
 cmake -S . -B build -G Ninja && cmake --build build           # aucun avertissement attendu (-Wall -Wextra -Wpedantic)
 ctest --test-dir build --output-on-failure                     # "test_core : OK"
-for s in 1 2 3 4 5 6 7 8 9 10; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
+for s in 1 2 3 4 5 6 7 8 9 10 11; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
+./build/physicslab --gpu-test                                  # M7 : GPU contre CPU (précision, temps, intégration), "gpu-test : OK"
 ```
 Build Debug propre depuis zéro de temps en temps (`-DCMAKE_BUILD_TYPE=Debug` dans un dossier jetable : vérifie les `assert`).
 Vérification visuelle (PowerShell) : `.\tools\screenshot.ps1 -Level 5 -Sim 4 -Wait 8` puis ouvrir le PNG indiqué. Regarder au moins les
 niveaux 1, 3, 5 et 6 d'un nouveau module, et un ancien module pour la non-régression. `-Clicks "x,y;x,y"` simule des clics.
 
-Options de l'application : `--level 1..6`, `--sim 1..10` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
-6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton, 10 = M6 corps rigide), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
+Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
+6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton, 10 = M6 corps rigide, 11 = M7 N corps sur GPU), `--smoke-test`, `--gpu-test [--gpu-max-n N]` (temps jusqu'à N ; 16000 par défaut, 200000 pour le débit maximal ; option CMake `PHYSICSLAB_GPU_TESTS` pour l'ajouter à ctest). Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
 
-## 6. Suite : M7 N-corps GPU (brouillon, à re-présenter brièvement au début de la prochaine conversation, puis commencer par l'étape 1 si l'utilisateur valide)
+## 6. Suite : livrables de fin de domaine Mécanique (M0 à M7 terminés)
 
-Brouillon rédigé de mémoire, à valider par le calcul et par des mesures (règle : ne rien affirmer sans l'avoir mesuré). Dernier module de la Mécanique.
-
-**Le problème.** Reprendre le calcul O(N²) de `nbody::accelerations` (M4b, CPU double) dans un compute shader OpenGL 4.5, en `float`, et mesurer l'écart au CPU : « le CPU vérifie le GPU ». Le contrat est l'interface existante
-(positions, masses, n, G, adoucissement, accélérations). L'adoucissement de Plummer est obligatoire (en `float` une rencontre rapprochée sature).
-
-**Algorithme.** Un thread par corps cible, boucle sur les sources par tuiles chargées en mémoire partagée (taille du groupe de travail), accumulation de a_i = G sum_j m_j (r_j − r_i) / (|r|² + eps²)^(3/2) ; intégration kick-drift-kick (Verlet)
-dans le shader sur des SSBO (double tampon des positions). Centrer les positions sur le barycentre pour limiter l'annulation dans r_j − r_i.
-
-**Difficultés (à mesurer, pas à affirmer).**
-- Précision `float` (mantisse 24 bits, 6e-8 relatif) : erreur d'accélération en fonction de N ; dérive d'énergie plus forte qu'en `double` ; ordre de sommation non déterministe d'un GPU à l'autre.
-- Le chaos limite la comparaison : après un temps de l'ordre de 1/λ (M4b : λ ≈ 0,8 pour l'amas de 6 corps, amplification ×6,6e4 sur 14 unités de temps) une trajectoire `float` et une trajectoire `double` n'ont plus rien de commun. Comparer
-  les ACCÉLÉRATIONS à état fixé (erreur relative corps par corps), puis des horizons courts et des grandeurs d'ensemble (E, P, L), pas des trajectoires longues.
-- Les forces par paire sont antisymétriques à l'arrondi près seulement : l'impulsion totale dérive (à mesurer, ~1e-7 relatif attendu par pas).
-- Les tests de `test_core` n'ont pas de contexte GL : prévoir une option `--gpu-test` de l'application (fenêtre cachée GL 4.5 comme `--smoke-test`) qui compare GPU et CPU et renvoie un code de sortie. Vérifier que le glad généré expose
-  `glDispatchCompute`, `glMemoryBarrier`, les SSBO et les requêtes de temps (GL 4.5 core devrait suffire : à contrôler).
-- Mesurer le temps avec `GL_TIME_ELAPSED` : N = 1e3 ... 1e5 (1e5² = 1e10 interactions par pas), débit en interactions par seconde contre le CPU `double`. Barnes-Hut hors périmètre.
-
-**Simulation (`--sim 11`).** Amas / galaxie de N réglable (de 100 à plusieurs dizaines de milliers : à mesurer), bascule CPU / GPU, panneau d'erreur (distribution des écarts d'accélération, dérive de E et P), temps par pas ; niveaux 1-6 (au niveau 1 :
-« l'ordinateur calcule toutes les paires de corps, la carte graphique les fait en parallèle »). Rendu : `Renderer::draw(Points)` avec renvoi des positions au CPU à chaque image au début ; un rendu direct depuis le SSBO demanderait de modifier le renderer.
-
-**Plan.** (1) Cœur et tests d'abord : enveloppe de programme de calcul et SSBO dans `render/` (a besoin d'un contexte GL : hors `physicslab_core`), shader `shaders/nbody.comp`, comparaison GPU/CPU à état fixé via `--gpu-test`. (2) Interface. (3) Commit, push, passation.
-**Fin de domaine Mécanique (après M7)** : devlog complet (`docs/devlog/`), prompt de reprise court, cours compilé en PDF ou Word pour non-initiés (`docs/cours/`), « roue des domaines » pour choisir le module suivant, merge de
-`module/mecanique` dans `main` et tag `mecanique-1`.
-
-**À réutiliser :** `nbody::accelerations` / `NBodyProblem` (CPU de référence), `SolverSet`, `StepClock`, `drawResultTable`, `wrapped`, `CradleModule` et `RigidBodyModule` comme exemples récents de modules (modèles côte à côte, détection de divergence,
-fenêtre « Analyse »), `tools/screenshot.ps1`.
+À faire dans l'ordre, en validant chaque livrable avec l'utilisateur (règle de fin de domaine, section 1) :
+1. **Devlog complet** dans `docs/devlog/` : un fichier par module ou un seul, avec les chiffres de la section 2 (qui viennent de l'exécution réelle ; refaire tourner les vérifications avant de citer un chiffre nouveau).
+2. **Cours compilé** (PDF ou Word) dans `docs/cours/`, pour expliquer à des non-initiés (l'utilisateur est professeur et s'en sert avec ses élèves) : de la chute libre au N-corps GPU, un chapitre par module, analogies, schémas, zéro pré-requis.
+3. **Roue des domaines** pour choisir le module suivant (Ondes, Thermodynamique, Électrodynamique, Fluides, Plasma, Atomique/Quantique/Nucléaire, Relativité/Astro/Cosmologie, Appliqués).
+4. **Prompt de reprise court** prêt à copier (section 8 à jour).
+5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1`** : actions visibles sur le dépôt public, à confirmer avec l'utilisateur avant de les faire.
 
 ## 7. Dette technique et idées
 
@@ -327,6 +340,11 @@ fenêtre « Analyse »), `tools/screenshot.ps1`.
   toupie à pivot fixe seulement (pas de toupie sur une table : contact, frottement, pointe qui glisse) ; pas de choc de corps rigides (cône de Coulomb, paradoxe de Painlevé) ; découpage d'ordre 2 seulement (pas de composition d'ordre 4 ni
   de RKMK d'ordre 4, alors que RK4 + renormalisation est d'ordre 4 mais perd L) ; textes des niveaux 2 et 3 non relus à l'écran ; valeurs extrêmes des curseurs et chemin « précession régulière impossible » non déclenchés dans l'application ;
   corps dessinés en fil de fer. `tests/test_core.cpp` : plus de 3100 lignes (à scinder par domaine).
+- M7 : mises à jour de v et x en float sans sommation compensée (Kahan ou deux floats) : le bruit d'arrondi fait dériver le huit de 4e-5 par période ; pas de relecture asynchrone (double tampon) : ~1 ms de latence par image, et les positions repassent
+  par le CPU pour le dessin (un rendu direct depuis le SSBO demanderait de modifier le `Renderer`) ; pas d'arbre (Barnes-Hut) : O(N²) ; pas de disque galactique ni de masses inégales dans le module ; N <= 20000 sur GPU et 4000 sur CPU ; la comparaison
+  GPU/CPU du panneau Analyse n'est automatique que jusqu'à 1500 étoiles et se limite à 4000 (O(N²) double sur le CPU) ; le banc d'essai bloque l'interface quelques secondes (6 en Debug) ; le double GPU n'est utilisable que sur une carte qui le calcule
+  vraiment ; l'énergie du GPU (N > 4000) est estimée en float par le shader ; les textes des niveaux 2 et 3 de M7 ne sont pas relus à l'écran (niveaux 1, 4, 5, 6 vus) ; `computeConvergence` n'existe pas pour M7 (pas de solveurs multiples).
+- README : annonçait « MSYS2 UCRT64 » alors que la chaîne réelle est mingw64 (corrigé).
 - Une fenêtre console s'ouvre à côté de l'application (à masquer en Release sous Windows).
 - Dans le tableau d'invariants du niveau 6, certains libellés sont abrégés (« Euler sympl. »).
 - Identité Git : `user.name` vaut `Noa-biy11` alors que le login GitHub est `Noa11-biy` (à corriger si l'utilisateur le souhaite).
@@ -334,7 +352,6 @@ fenêtre « Analyse »), `tools/screenshot.ps1`.
 
 ## 8. Prompt de reprise (à coller dans la nouvelle conversation)
 
-> Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges),
-> puis `README.md`. Vérifie que ça compile et que les tests passent (section 5), puis présente-moi la feuille de route courte du
-> module M7 (N-corps GPU en compute shader, écart CPU/GPU ; M6 corps rigide est terminé ; la section 6 en donne le brouillon) avant de coder.
-> Réponses courtes pendant le module, en français. Après M7 : livrables de fin de domaine Mécanique (devlog, cours, roue des domaines, merge, tag).
+> Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges), puis `README.md`. Vérifie que ça compile et que les tests passent (section 5, y compris `--gpu-test`).
+> La Mécanique est terminée (M0 à M7). Présente-moi un plan court des livrables de fin de domaine (devlog, cours pour non-initiés en PDF ou Word, roue des domaines, prompt de reprise ; merge de `module/mecanique` dans `main` et tag `mecanique-1`
+> seulement après mon accord), puis fais-les un par un. Réponses courtes, en français.

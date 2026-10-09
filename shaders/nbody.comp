@@ -20,7 +20,7 @@
 layout(local_size_x = WG) in;
 
 layout(std430, binding = 0) readonly buffer Bodies { vec4r body[]; };    // (x, y, z, masse)
-layout(std430, binding = 1) writeonly buffer Accel { vec4r accel[]; };   // (ax, ay, az, 0)
+layout(std430, binding = 1) writeonly buffer Accel { vec4r accel[]; };   // (ax, ay, az, phi) ; phi = potentiel en ce point
 
 uniform int uCount;        // nombre de corps
 uniform uint uFirstGroup;  // premier groupe de cet envoi (le calcul est découpé en plusieurs envois courts)
@@ -34,6 +34,7 @@ void main() {
     const uint n = uint(uCount);
     const vec4r bi = i < n ? body[i] : vec4r(0.0);
     vec3r a = vec3r(0.0);
+    real s = real(0.0);  // sum_j m_j / sqrt(r^2 + eps^2) : le potentiel phi_i = -G s_i, presque gratuit (m_j / r est déjà calculé)
 
     for (uint base = 0u; base < n; base += WG) {
         const uint j = base + gl_LocalInvocationID.x;
@@ -45,10 +46,14 @@ void main() {
             const real r2 = dot(d, d) + uEps2;
             const real inv = inversesqrt(r2);
             // r2 = 0 seulement pour le corps lui-même sans adoucissement (ou une case de remplissage sur le corps 0) : force nulle.
-            const real w = r2 > real(0.0) ? bj.w * inv * inv * inv : real(0.0);
-            a += d * w;
+            const bool apart = r2 > real(0.0);
+            const real mj = apart ? bj.w * inv : real(0.0);                // m_j / r
+            a += d * (apart ? mj * inv * inv : real(0.0));                 // m_j d / r^3 (0 * inf serait NaN : garde sur tout le produit)
+            s += mj;
         }
         barrier();  // tous les threads ont fini de lire la tuile avant qu'on la recharge
     }
-    if (i < n) accel[i] = vec4r(uG * a, 0.0);
+    // Le corps compte dans sa propre somme (d = 0, r2 = eps^2) : on retire ce terme m_i / eps pour avoir sum_{j != i}.
+    const real self = uEps2 > real(0.0) ? bi.w * inversesqrt(uEps2) : real(0.0);
+    if (i < n) accel[i] = vec4r(uG * a, -uG * (s - self));
 }

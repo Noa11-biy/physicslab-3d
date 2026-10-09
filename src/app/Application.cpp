@@ -23,6 +23,7 @@
 #include "CradleModule.hpp"
 #include "RigidBodyModule.hpp"
 #include "FrictionModule.hpp"
+#include "GpuNBodyModule.hpp"
 #include "GpuTest.hpp"
 #include "NBodyModule.hpp"
 #include "OscillatorModule.hpp"
@@ -332,6 +333,7 @@ int App::run(const AppOptions& options) {
     modules_.push_back(std::make_unique<BounceModule>());
     modules_.push_back(std::make_unique<CradleModule>());
     modules_.push_back(std::make_unique<RigidBodyModule>());
+    modules_.push_back(std::make_unique<GpuNBodyModule>(PHYSICSLAB_SHADER_DIR));
     activate(std::clamp(options.simulation - 1, 0, static_cast<int>(modules_.size()) - 1));
 
     using Clock = std::chrono::steady_clock;

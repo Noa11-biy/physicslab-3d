@@ -210,6 +210,65 @@ NBodyProblem NBodyProblem::randomCluster(int n, unsigned seed, double radius, do
     return p;
 }
 
+NBodyProblem NBodyProblem::plummer(int n, unsigned seed, double scaleRadius, double softening) {
+    std::mt19937 rng(seed);
+    auto uniform = [&] { return (rng() + 0.5) / 4294967296.0; };  // dans ]0, 1[
+    const auto direction = [&](double length) {                    // vecteur de module `length`, direction uniforme
+        const double z = 2.0 * uniform() - 1.0, phi = 2.0 * constants::pi * uniform(), s = std::sqrt(1.0 - z * z);
+        return Vec3{length * s * std::cos(phi), length * s * std::sin(phi), length * z};
+    };
+
+    NBodyProblem p;
+    p.softening = softening;
+    p.mass.assign(n, 1.0 / n);
+    const double velocityScale = 1.0 / std::sqrt(scaleRadius);  // sqrt(G M / a)
+    for (int i = 0; i < n; ++i) {
+        double r;
+        do {  // masse contenue M(r) = r³ / (1 + r²)^(3/2) = X  =>  r = 1 / sqrt(X^(-2/3) - 1)
+            r = 1.0 / std::sqrt(std::pow(uniform(), -2.0 / 3.0) - 1.0);
+        } while (r > 10.0);
+        // q = v / v_esc, de densité g(q) = q² (1 - q²)^(7/2) (maximum 0,092 < 0,1 : rejet avec la borne 0,1).
+        double q;
+        do {
+            q = uniform();
+        } while (0.1 * uniform() > q * q * std::pow(1.0 - q * q, 3.5));
+        const double escape = std::sqrt(2.0) * std::pow(1.0 + r * r, -0.25);
+        p.position.push_back(scaleRadius * direction(r));
+        p.velocity.push_back(velocityScale * direction(q * escape));
+    }
+
+    Vec3 meanPos, meanVel;  // centre de masse (masses égales) au repos à l'origine
+    for (int i = 0; i < n; ++i) { meanPos += p.position[i]; meanVel += p.velocity[i]; }
+    meanPos /= n;
+    meanVel /= n;
+    for (int i = 0; i < n; ++i) { p.position[i] -= meanPos; p.velocity[i] -= meanVel; }
+    return p;
+}
+
+NBodyProblem NBodyProblem::plummerCollision(int n, unsigned seed, double separation, double relativeSpeed, double scaleRadius,
+                                            double softening) {
+    const int half = n / 2;
+    NBodyProblem left = plummer(half, seed, scaleRadius, softening);
+    NBodyProblem right = plummer(n - half, seed * 2654435761u + 1u, scaleRadius, softening);
+    // Masses : chaque sphère pèse 1/2 (donc m = 1/(2 half) et 1/(2 (n - half)) ; le total reste 1). Les vitesses internes gardent
+    // l'équilibre d'une sphère de masse 1 : elles sont multipliées par sqrt(1/2) pour une masse 1/2.
+    NBodyProblem p;
+    p.softening = softening;
+    const double internal = std::sqrt(0.5);
+    const Vec3 shift{0.5 * separation, 0.0, 0.0}, boost{0.5 * relativeSpeed, 0.0, 0.0};
+    for (int i = 0; i < half; ++i) {
+        p.mass.push_back(0.5 / half);
+        p.position.push_back(left.position[i] - shift);
+        p.velocity.push_back(internal * left.velocity[i] + boost);
+    }
+    for (int i = 0; i < n - half; ++i) {
+        p.mass.push_back(0.5 / (n - half));
+        p.position.push_back(right.position[i] + shift);
+        p.velocity.push_back(internal * right.velocity[i] - boost);
+    }
+    return p;
+}
+
 double nbodyError(const NBodyProblem& problem, Solver& solver, int steps, double tEnd) {
     const OdeFunction f = problem.rhs();
     State y = problem.initialState();

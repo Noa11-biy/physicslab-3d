@@ -155,6 +155,7 @@ void printStats(const char* label, const ErrorStats& e) {
 double toleranceFloat(int n) { return 5e-8 * (3.0 + std::sqrt(static_cast<double>(n))); }
 constexpr double kToleranceNetForce = 1e-6;  // |sum m a| / sum m |a| en float (mesuré : 1e-8 à 2e-8)
 constexpr double kToleranceDouble = 1e-12;   // GPU double contre CPU double (mesuré : 3e-16)
+constexpr double kTolerancePotential = 5e-6; // énergie potentielle du shader float contre CPU (mesuré : 5e-9 à 4,3e-7, 6,2e-7 sans centrage)
 // Le double du shader est émulé par le pilote de cette carte (Intel UHD) : environ 3e6 interactions/s mesurées, soit des milliers de
 // fois moins que le float. Au-delà de ce nombre de corps on ne le lance plus (5000 corps : 9 s d'un seul envoi, risque de redémarrage du pilote).
 constexpr int kMaxBodiesDouble = 1000;
@@ -188,6 +189,13 @@ ErrorStats accuracyCase(const char* name, const Cloud& c, double G, double eps, 
     const RoundedInput in = roundToFloat(c, eps, centering);
     nbody::accelerations(in.pos.data(), in.mass.data(), c.n, G, in.eps, refRounded.data());
 
+    // Énergie potentielle du shader (phi_i rangé avec les accélérations) contre celle du CPU en double.
+    const double uCpu = nbody::potentialEnergy(c.pos.data(), c.mass.data(), c.n, G, eps);
+    const double uGpu = gpuF.potentialEnergy();
+    const double uErr = uCpu != 0.0 ? std::abs(uGpu / uCpu - 1.0) : std::abs(uGpu);
+    std::printf("    énergie potentielle : CPU %.8g  GPU float %.8g  écart relatif %.2e\n", uCpu, uGpu, uErr);
+    check(uErr <= kTolerancePotential, "énergie potentielle GPU float trop éloignée du CPU double");
+
     const ErrorStats vsRaw = compare(ref, gpu, scale);
     const ErrorStats vsRounded = compare(refRounded, gpu, scale);
     const ErrorStats roundingOnly = compare(ref, refRounded, scale);
@@ -206,6 +214,10 @@ ErrorStats accuracyCase(const char* name, const Cloud& c, double G, double eps, 
         gpuD->accelerations(c.pos.data(), c.mass.data(), c.n, G, eps, gd.data());
         const ErrorStats e = compare(ref, gd, scale);
         std::printf("    temps du noyau GPU double : %.3f ms\n", 1e3 * gpuD->lastKernelSeconds());
+        const double uDouble = gpuD->potentialEnergy();
+        const double uDoubleErr = uCpu != 0.0 ? std::abs(uDouble / uCpu - 1.0) : std::abs(uDouble);
+        std::printf("    énergie potentielle GPU double : écart relatif %.2e\n", uDoubleErr);
+        check(uDoubleErr <= kToleranceDouble, "énergie potentielle GPU double trop éloignée du CPU double");
         printStats("GPU double / CPU double", e);
         check(e.globalRel <= kToleranceDouble, "écart global GPU double / CPU double trop grand");
     }

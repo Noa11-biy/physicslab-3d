@@ -54,6 +54,10 @@ public:
     void readAccelerations(double* acc) const;
     // Équivalent GPU de nbody::accelerations (envoi + calcul + relecture).
     void accelerations(const double* positions, const double* masses, int n, double G, double softening, double* acc);
+    // Énergie potentielle (adoucie) des positions pour lesquelles les accélérations viennent d'être calculées (compute(), ou fin de
+    // step()) : U = 1/2 sum m_i phi_i, où le shader range phi_i dans la 4e composante des accélérations. Chaque phi_i est sommé en
+    // float (ou double) sur le GPU, la somme sur les corps est faite ici en double. Renvoie 0 si les accélérations ne sont pas à jour.
+    double potentialEnergy() const;
 
     // --- mouvement ---
     // Envoie l'état initial : positions (3n), vitesses (3n), masses (n). Les positions sont relues dans le repère d'origine.

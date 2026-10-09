@@ -61,6 +61,7 @@ add_executable(physicslab
     src/app/Application.cpp
     src/app/UiCommon.cpp
     src/app/GpuTest.cpp
+    src/app/GpuNBodyModule.cpp
     src/app/ProjectileModule.cpp
     src/app/OscillatorModule.cpp
     src/app/PendulumModule.cpp
