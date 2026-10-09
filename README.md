@@ -34,6 +34,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
 ./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 10 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6)
+./build/physicslab --gpu-test               # M7 : compare le calcul N-corps du GPU (compute shader) au CPU double, mesure les temps
 ```
 
 Si le dépôt a été cloné sans `--recurse-submodules` : `git submodule update --init --recursive`.

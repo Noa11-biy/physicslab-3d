@@ -23,6 +23,7 @@
 #include "CradleModule.hpp"
 #include "RigidBodyModule.hpp"
 #include "FrictionModule.hpp"
+#include "GpuTest.hpp"
 #include "NBodyModule.hpp"
 #include "OscillatorModule.hpp"
 #include "PendulumModule.hpp"
@@ -309,9 +310,14 @@ void App::buildUi() {
 // ------------------------------ boucle ---------------------------------
 
 int App::run(const AppOptions& options) {
-    if (!initWindow(!options.smokeTest)) {
+    if (!initWindow(!options.smokeTest && !options.gpuTest)) {
         shutdown();
         return 1;
+    }
+    if (options.gpuTest) {  // pas d'interface : seulement le contexte OpenGL, pour le calcul GPU
+        const int code = runGpuTest(PHYSICSLAB_SHADER_DIR, options.gpuMaxN);
+        shutdown();
+        return code;
     }
     level_ = static_cast<Level>(options.level - 1);
     initImGui();
