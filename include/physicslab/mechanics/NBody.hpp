@@ -75,6 +75,16 @@ struct NBodyProblem {
     // N corps de masse totale 1 dans une boule de rayon `radius`, vitesses aléatoires à l'équilibre du viriel (2T = -U),
     // centre de masse au repos à l'origine. Déterministe pour un `seed` donné.
     static NBodyProblem randomCluster(int n, unsigned seed, double radius = 1.0, double softening = 0.05);
+    // Sphère de Plummer à l'équilibre (M7) : N corps égaux, masse totale 1, G = 1, rayon d'échelle `scaleRadius` a. Densité
+    // rho(r) ~ (1 + r²/a²)^(-5/2) ; positions et vitesses tirées par la méthode d'Aarseth, Hénon et Wielen (1974), qui échantillonne
+    // la fonction de distribution exacte (équilibre sans mise à l'échelle). Rayons limités à 10 a (1,5 % de la masse écartée).
+    // Centre de masse immobile à l'origine. Théorie (N grand, sans adoucissement) : E = -3 pi / 64 G M² / a, 2T = -U, rayon de
+    // demi-masse 1,3048 a. Déterministe pour un `seed` donné, et en O(N) (contrairement à randomCluster).
+    static NBodyProblem plummer(int n, unsigned seed, double scaleRadius = 1.0, double softening = 0.05);
+    // Deux sphères de Plummer de n/2 corps et de masse 1/2 chacune, centres en (±separation/2, 0, 0) qui se rapprochent à la vitesse
+    // relative `relativeSpeed` (repère du centre de masse). Chaque sphère garde l'équilibre qu'elle a seule.
+    static NBodyProblem plummerCollision(int n, unsigned seed, double separation = 6.0, double relativeSpeed = 0.4,
+                                         double scaleRadius = 0.6, double softening = 0.05);
 };
 
 // Intègre jusqu'à tEnd en `steps` pas égaux et renvoie la distance finale à la référence RK45.

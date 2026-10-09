@@ -16,7 +16,7 @@ Chaque phénomène s'explique à **6 niveaux** : vulgarisation, intéressé, col
 | Élément    | Choix                                                   |
 |------------|---------------------------------------------------------|
 | Langage    | C++17, CMake                                            |
-| Plateformes| Windows (MSYS2 UCRT64) et Linux                         |
+| Plateformes| Windows (MSYS2 mingw64) et Linux                        |
 | Rendu / GPU| OpenGL 4.5 + compute shaders (GLFW + GLAD)              |
 | Interface  | Dear ImGui (docking) + ImPlot                           |
 
@@ -33,7 +33,7 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
-./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 10 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6)
+./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 11 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7)
 ./build/physicslab --gpu-test               # M7 : compare le calcul N-corps du GPU (compute shader) au CPU double, mesure les temps
 ```
 
@@ -67,7 +67,7 @@ Ordre de progression (cocher au fil des modules) :
   - [x] M4 : gravitation (Kepler à 2 corps avec précession numérique prédite ; N-corps : huit, triangle de Lagrange, amas chaotique)
   - [x] M5 : collisions et frottements (frottement sec de Coulomb ; chocs et rebonds ; berceau de Newton : contact de Hertz contre impulsions séquentielles)
   - [x] M6 : corps rigide (solides libres symétrique et asymétrique, toupie de Lagrange, intégrateurs d'orientation : Euler, RK4, groupe de Lie, découpage symplectique)
-  - [ ] M7 : N-corps GPU (compute shader)
+  - [x] M7 : N-corps sur GPU (compute shader, float ou double, kick-drift-kick sur GPU, comparaison au CPU double ; `--sim 11`, `--gpu-test`)
 - [ ] Ondes (acoustique, optique)
 - [ ] Thermodynamique
 - [ ] Électrodynamique

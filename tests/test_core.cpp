@@ -1248,6 +1248,67 @@ void testNBodyChaos() {
     CHECK(growth(NBodyProblem::randomCluster(6, 42, 1.0, 0.05)) > 1e3);         // mesuré : 6,6e4
 }
 
+// M7 : sphère de Plummer (conditions initiales de l'amas du module GPU). Théorie pour N grand, G = M = a = 1, sans troncature :
+// E = -3 pi / 64 = -0,1473, 2T = -U, rayon de demi-masse 1,3048. Mesuré sur 7 graines à N = 4000 : E de -0,147 à -0,159 (moyenne
+// -0,152 : retirer les corps au-delà de 10 a, soit 1,5 % de la masse, creuse un peu le puits), 2T/|U| de 0,96 à 1,00, rayon de
+// demi-masse de 1,264 à 1,330.
+void testPlummer() {
+    const auto halfMassRadius = [](const NBodyProblem& p) {
+        std::vector<double> r;
+        for (const Vec3& x : p.position) r.push_back(x.norm());
+        std::sort(r.begin(), r.end());
+        return r[r.size() / 2];
+    };
+    const auto virial = [](const NBodyProblem& p, const State& y) { return 2.0 * p.kineticEnergy(y) / -p.potentialEnergy(y); };
+
+    const NBodyProblem p = NBodyProblem::plummer(4000, 42, 1.0, 0.0);
+    const State y = p.initialState();
+    CHECK_NEAR(p.totalMass(), 1.0, 1e-12);
+    CHECK(p.centerOfMass(y).norm() < 1e-13);   // centre de masse au repos à l'origine
+    CHECK(p.momentum(y).norm() < 1e-13);
+    CHECK(p.energy(y) < -0.14 && p.energy(y) > -0.17);       // mesuré : -0,1505
+    CHECK(virial(p, y) > 0.93 && virial(p, y) < 1.05);       // équilibre du viriel : mesuré 0,995
+    CHECK(halfMassRadius(p) > 1.24 && halfMassRadius(p) < 1.37);   // mesuré : 1,307
+
+    // Déterminisme, et changement d'échelle exact : positions x a, vitesses / sqrt(a), donc E / a.
+    const NBodyProblem same = NBodyProblem::plummer(4000, 42, 1.0, 0.0), other = NBodyProblem::plummer(4000, 43, 1.0, 0.0);
+    CHECK(same.position[0].x == p.position[0].x && same.velocity[3999].z == p.velocity[3999].z);
+    CHECK(other.position[0].x != p.position[0].x);
+    const NBodyProblem wide = NBodyProblem::plummer(4000, 42, 2.0, 0.0);
+    CHECK_NEAR(wide.energy(wide.initialState()) / p.energy(y), 0.5, 1e-9);
+    CHECK_NEAR(halfMassRadius(wide) / halfMassRadius(p), 2.0, 1e-12);
+
+    // L'équilibre tient en dynamique : N = 500, 500 pas de 0,01 (t = 5, environ une traversée), rayon de demi-masse à 10 % et
+    // énergie conservée (mesuré : +3,4 % et 4e-7).
+    const NBodyProblem small = NBodyProblem::plummer(500, 3, 1.0, 0.05);
+    State ys = small.initialState();
+    VelocityVerlet verlet;
+    const OdeFunction f = small.rhs();
+    const double e0 = small.energy(ys), r0 = halfMassRadius(small);
+    double t = 0.0;
+    for (int i = 0; i < 500; ++i) t += verlet.step(f, t, ys, 0.01);
+    NBodyProblem moved = small;
+    for (int i = 0; i < 500; ++i) moved.position[i] = {ys[3 * i], ys[3 * i + 1], ys[3 * i + 2]};
+    CHECK(std::abs(halfMassRadius(moved) / r0 - 1.0) < 0.1);
+    CHECK(std::abs(small.energy(ys) / e0 - 1.0) < 1e-4);
+
+    // Collision : deux sphères de masse 1/2 qui se rapprochent, système lié, centre de masse au repos à l'origine.
+    const NBodyProblem c = NBodyProblem::plummerCollision(2000, 7, 6.0, 0.4, 0.6, 0.0);
+    const State yc = c.initialState();
+    CHECK_NEAR(c.totalMass(), 1.0, 1e-12);
+    CHECK(c.momentum(yc).norm() < 1e-13 && c.centerOfMass(yc).norm() < 1e-13);
+    CHECK(c.energy(yc) < -0.13 && c.energy(yc) > -0.16);     // lié ; mesuré : -0,148 (attendu -0,144 sans troncature)
+    double leftMass = 0.0, leftX = 0.0, leftVx = 0.0;
+    for (int i = 0; i < 1000; ++i) {
+        leftMass += c.mass[i];
+        leftX += c.position[i].x / 1000.0;
+        leftVx += c.velocity[i].x / 1000.0;
+    }
+    CHECK_NEAR(leftMass, 0.5, 1e-12);
+    CHECK_NEAR(leftX, -3.0, 1e-12);    // centre de la sphère de gauche en -séparation/2
+    CHECK_NEAR(leftVx, 0.2, 1e-12);    // elle avance à la moitié de la vitesse relative
+}
+
 // --- M5 : événements, frottement sec, chocs ----------------------------------------------
 
 void testEventDetection() {
@@ -3199,6 +3260,7 @@ int main() {
     testNBodyConvergence();
     testNBodyConservation();
     testNBodyChaos();
+    testPlummer();
     testEventDetection();
     testAdvanceBudget();
     testInclineExact();

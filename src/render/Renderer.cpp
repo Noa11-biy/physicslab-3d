@@ -2,6 +2,7 @@
 
 #include <glad/gl.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <fstream>
@@ -90,6 +91,7 @@ void Renderer::shutdown() {
     if (vao_) glDeleteVertexArrays(1, &vao_);
     if (program_) glDeleteProgram(program_);
     vbo_ = vao_ = program_ = 0;
+    vboCapacity_ = vboOffset_ = 0;
 }
 
 void Renderer::beginFrame(int fbW, int fbH, const ViewRect& view, const Camera& camera,
@@ -117,13 +119,21 @@ void Renderer::beginFrame(int fbW, int fbH, const ViewRect& view, const Camera& 
     glUseProgram(program_);
     glUniformMatrix4fv(uViewProj_, 1, GL_FALSE, viewProj);
     glBindVertexArray(vao_);
+    vboOffset_ = 0;
 }
 
 void Renderer::draw(Primitive primitive, const std::vector<Vertex>& vertices, float pointSize) {
     if (vertices.empty()) return;
 
-    glNamedBufferData(vbo_, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)), vertices.data(),
-                      GL_STREAM_DRAW);
+    const long long bytes = static_cast<long long>(vertices.size() * sizeof(Vertex));
+    if (vboOffset_ + bytes > vboCapacity_) {  // plus de place dans cette image : nouvelle allocation (4 Mio au moins)
+        vboCapacity_ = std::max<long long>({4LL << 20, 2 * vboCapacity_, bytes});
+        glNamedBufferData(vbo_, static_cast<GLsizeiptr>(vboCapacity_), nullptr, GL_STREAM_DRAW);
+        vboOffset_ = 0;
+    }
+    glNamedBufferSubData(vbo_, static_cast<GLintptr>(vboOffset_), static_cast<GLsizeiptr>(bytes), vertices.data());
+    glVertexArrayVertexBuffer(vao_, 0, vbo_, static_cast<GLintptr>(vboOffset_), sizeof(Vertex));
+    vboOffset_ += bytes;
     glUniform1f(uPointSize_, pointSize);
     glUniform1i(uRound_, primitive == Primitive::Points ? 1 : 0);
 
