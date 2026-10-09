@@ -42,7 +42,9 @@ add_library(physicslab_core STATIC
     src/mechanics/Collision.cpp
     src/mechanics/Bounce.cpp
     src/mechanics/Cradle.cpp
-    src/mechanics/RigidBody.cpp)
+    src/mechanics/RigidBody.cpp
+    src/waves/Fft.cpp
+    src/waves/Wave.cpp)
 target_include_directories(physicslab_core PUBLIC include)
 physicslab_warnings(physicslab_core)
 
@@ -84,6 +86,12 @@ if(PHYSICSLAB_BUILD_TESTS)
     target_link_libraries(test_core PRIVATE physicslab_core)
     physicslab_warnings(test_core)
     add_test(NAME core COMMAND test_core)
+
+    # Ondes : un exécutable par domaine (test_core.cpp dépasse déjà 3000 lignes).
+    add_executable(test_waves tests/test_waves.cpp)
+    target_link_libraries(test_waves PRIVATE physicslab_core)
+    physicslab_warnings(test_waves)
+    add_test(NAME waves COMMAND test_waves)
 
     # Test GPU (M7) : exige un pilote OpenGL 4.5 avec compute shaders, donc désactivé par défaut (machines sans écran, intégration continue).
     option(PHYSICSLAB_GPU_TESTS "Ajouter le test GPU (--gpu-test) à ctest" OFF)
