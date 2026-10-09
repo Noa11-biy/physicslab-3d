@@ -107,7 +107,10 @@ double Wave1D::energy() const {
 
 double Wave1D::maxAbs() const {
     double m = 0.0;
-    for (double v : cur_) m = std::max(m, std::abs(v));
+    for (double v : cur_) {
+        const double a = std::abs(v);
+        if (!(a <= m)) m = a;  // contrairement à std::max, un NaN se propage : un calcul qui a explosé ne passe pas pour un calcul calme
+    }
     return m;
 }
 
@@ -238,7 +241,10 @@ double Wave2D::energy() const {
 
 double Wave2D::maxAbs() const {
     double m = 0.0;
-    for (double v : cur_) m = std::max(m, std::abs(v));
+    for (double v : cur_) {
+        const double a = std::abs(v);
+        if (!(a <= m)) m = a;  // un NaN se propage (voir Wave1D::maxAbs)
+    }
     return m;
 }
 
