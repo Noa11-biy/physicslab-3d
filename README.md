@@ -33,7 +33,7 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
-./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 11 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7)
+./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 12 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7, O0)
 ./build/physicslab --gpu-test               # M7 : compare le calcul N-corps du GPU (compute shader) au CPU double, mesure les temps
 ```
 
@@ -43,10 +43,10 @@ Si le dépôt a été cloné sans `--recurse-submodules` : `git submodule update
 
 ```
 include/physicslab/   en-têtes publics : core/ (maths, solveurs, monde), mechanics/ (problèmes de référence
-                      avec solution exacte), render/ (OpenGL)
-src/                  sources : core/, mechanics/, render/, app/ (fenêtre, interface, un module par simulation)
+                      avec solution exacte), waves/ (FFT, équation d'onde sur grille), render/ (OpenGL)
+src/                  sources : core/, mechanics/, waves/, render/, app/ (fenêtre, interface, un module par simulation)
 shaders/              *.comp, *.vert, *.frag
-tests/                validations (invariants, solutions analytiques, écart CPU/GPU)
+tests/                validations (invariants, solutions analytiques, écart CPU/GPU) : test_core (Mécanique), test_waves (Ondes)
 tools/                scripts utilitaires (capture d'écran automatique pour vérifier l'interface)
 third_party/          GLFW 3.4, ImGui 1.92 (docking), ImPlot 1.0 en sous-modules ; GLAD généré (GL 4.5 core)
 docs/
@@ -60,7 +60,7 @@ docs/
 
 Ordre de progression (cocher au fil des modules) :
 
-- [x] Mécanique (terminée : devlog, cours et roue des domaines livrés ; merge dans `main` et tag `mecanique-1` à venir)
+- [x] Mécanique (terminée : devlog, cours et roue des domaines livrés ; fusionnée dans `main`, tag `mecanique-1`)
   - [x] M0 : socle (CMake, fenêtre, ImGui docking, maths, interface Solver, sélecteur de niveau)
   - [x] M1 : projectile avec frottement, comparaison Euler / Euler symplectique / Verlet / RK4 / RK45
   - [x] M2 : ressort-masse (libre, amorti, forcé, résonance)
@@ -69,7 +69,13 @@ Ordre de progression (cocher au fil des modules) :
   - [x] M5 : collisions et frottements (frottement sec de Coulomb ; chocs et rebonds ; berceau de Newton : contact de Hertz contre impulsions séquentielles)
   - [x] M6 : corps rigide (solides libres symétrique et asymétrique, toupie de Lagrange, intégrateurs d'orientation : Euler, RK4, groupe de Lie, découpage symplectique)
   - [x] M7 : N-corps sur GPU (compute shader, float ou double, kick-drift-kick sur GPU, comparaison au CPU double ; `--sim 11`, `--gpu-test`)
-- [ ] Ondes (acoustique, optique)
+- [ ] Ondes (acoustique, optique), en cours sur la branche `module/ondes`
+  - [x] O0 : socle (FFT, équation d'onde 1D et 2D en saute-mouton, bords fixe / libre / éponge, relief coloré ; `--sim 12`)
+  - [ ] O1 : corde vibrante (modes propres f_n = n c / 2L, chaîne de masses)
+  - [ ] O2 : dispersion numérique et condition CFL
+  - [ ] O3 : cuve à ondes 2D sur GPU (réflexion, réfraction de Snell-Descartes)
+  - [ ] O4 : interférences de Young et diffraction
+  - [ ] O5 : acoustique (tuyau d'orgue, effet Doppler)
 - [ ] Thermodynamique
 - [ ] Électrodynamique
 - [ ] Fluides
