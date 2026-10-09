@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Roue des domaines PhysicsLab</title>
+<meta name="description" content="Les neuf domaines de PhysicsLab 3D dans l'ordre prévu, avec pour chacun ce qui est déjà prêt, ce qu'il faut construire, les cas de référence et le prompt de reprise à copier.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Mise en page : une roue de neuf secteurs, fixe à gauche, et le détail du secteur choisi à droite (empilés sur téléphone).
+   Palette : gris-bleu d'établi de labo ; chaque domaine a sa teinte (--h) ; l'ambre est réservé au domaine proposé. */
+:root {
+  --bg: #E8EDF1;
+  --panel: #F6F8FA;
+  --fg: #12202B;
+  --muted: #4B5B67;
+  --line: #C3CDD6;
+  --lamp: #A8480A;
+  --lamp-soft: #FBE9D4;
+  --ok: #1B6A47;
+  --ok-soft: #DDF1E6;
+  --focus: #0B57D0;
+  --sec-s: 38%;
+  --sec-l: 90%;
+  --hov-l: 83%;
+  --sel-s: 58%;
+  --sel-l: 30%;
+  --on-sel: #FFFFFF;
+  --font-display: "Bricolage Grotesque", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0D141A;
+    --panel: #131C24;
+    --fg: #E5ECF1;
+    --muted: #9CABB7;
+    --line: #2A3845;
+    --lamp: #F5A524;
+    --lamp-soft: #3B2A10;
+    --ok: #5FCF98;
+    --ok-soft: #12352A;
+    --focus: #7DB1FF;
+    --sec-s: 26%;
+    --sec-l: 21%;
+    --hov-l: 27%;
+    --sel-s: 52%;
+    --sel-l: 55%;
+    --on-sel: #0A1218;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0D141A;
+  --panel: #131C24;
+  --fg: #E5ECF1;
+  --muted: #9CABB7;
+  --line: #2A3845;
+  --lamp: #F5A524;
+  --lamp-soft: #3B2A10;
+  --ok: #5FCF98;
+  --ok-soft: #12352A;
+  --focus: #7DB1FF;
+  --sec-s: 26%;
+  --sec-l: 21%;
+  --hov-l: 27%;
+  --sel-s: 52%;
+  --sel-l: 55%;
+  --on-sel: #0A1218;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 1rem/1.55 var(--font-body);
+  padding-inline: max(1rem, env(safe-area-inset-left, 0px));
+  padding-block: 2rem 3rem;
+  -webkit-text-size-adjust: 100%;
+}
+.wrap { max-width: 72rem; margin-inline: auto; display: flex; flex-direction: column; gap: 2.5rem; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+p { margin: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* en-tête */
+.head { display: flex; flex-direction: column; gap: 0.75rem; max-width: 46rem; }
+.eyebrow { font: 500 0.75rem/1.2 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 700 clamp(2.1rem, 5.5vw, 3.25rem)/1.02 var(--font-display); letter-spacing: -0.02em; }
+.lead { color: var(--muted); max-width: 62ch; }
+.lead strong { color: var(--fg); font-weight: 600; }
+
+/* scène : roue + détail */
+.stage { display: grid; gap: 2rem; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 62rem) {
+  .stage { grid-template-columns: minmax(0, 27.5rem) minmax(0, 1fr); gap: 2.5rem; }
+  .wheelbox { position: sticky; top: 1.5rem; }
+}
+.wheelbox { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.wheel { width: 100%; max-width: 30rem; height: auto; margin-inline: auto; display: block; touch-action: manipulation; }
+.sector { cursor: pointer; outline: none; transition: transform 0.22s ease; }
+.sector path.body {
+  fill: hsl(var(--h) var(--sec-s) var(--sec-l));
+  stroke: var(--bg);
+  stroke-width: 3;
+  transition: fill 0.15s ease;
+}
+.sector:hover path.body { fill: hsl(var(--h) var(--sec-s) var(--hov-l)); }
+.sector.sel { transform: translate(var(--tx), var(--ty)); }
+.sector.sel path.body { fill: hsl(var(--h) var(--sel-s) var(--sel-l)); }
+.sector.dep path.body { stroke: var(--muted); stroke-width: 3; stroke-dasharray: 6 5; }
+.sector:focus-visible path.body { stroke: var(--focus); stroke-width: 4; stroke-dasharray: none; }
+.sector text { fill: var(--fg); font-family: var(--font-body); pointer-events: none; text-anchor: middle; }
+.sector.sel text { fill: var(--on-sel); }
+.sector .nm { font-size: 15px; font-weight: 600; }
+.sector .no { font-size: 11px; font-family: var(--font-mono); opacity: 0.75; }
+.sector .tick { fill: none; stroke: var(--ok); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.sector.sel .tick { stroke: var(--on-sel); }
+.lampArc { fill: none; stroke: var(--lamp); stroke-width: 5; stroke-linecap: round; }
+.hub { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.hubTop { font: 500 10.5px var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; fill: var(--muted); text-anchor: middle; }
+.hubName { font: 700 21px var(--font-display); fill: var(--fg); text-anchor: middle; letter-spacing: -0.01em; }
+.hubState { font: 500 11.5px var(--font-body); fill: var(--muted); text-anchor: middle; }
+.hubState.next { fill: var(--lamp); font-weight: 600; }
+.hubState.done { fill: var(--ok); font-weight: 600; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.8125rem; color: var(--muted); justify-content: center; }
+.legend span { display: inline-flex; align-items: center; gap: 0.45rem; }
+.sw { width: 1.1rem; height: 0.7rem; border-radius: 2px; flex: none; }
+.sw.lamp { background: var(--lamp); height: 0.3rem; border-radius: 2px; }
+.sw.dash { border: 2px dashed var(--muted); height: 0.7rem; }
+.sw.chk { width: 0.7rem; height: 0.7rem; }
+.keys { text-align: center; font-size: 0.8125rem; color: var(--muted); }
+
+/* panneau de détail */
+.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 0.875rem; padding: clamp(1.1rem, 3vw, 1.75rem); display: flex; flex-direction: column; gap: 1.5rem; min-width: 0; }
+.dhead { display: flex; flex-direction: column; gap: 0.7rem; }
+.pills { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.pill { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; padding: 0.4rem 0.6rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.next { background: var(--lamp-soft); border-color: var(--lamp); color: var(--lamp); }
+.pill.done { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+h2 { font: 700 clamp(1.6rem, 3.6vw, 2.25rem)/1.08 var(--font-display); letter-spacing: -0.015em; }
+.pitch { color: var(--muted); max-width: 60ch; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 0.75rem 1.5rem; margin: 0; padding-block: 1rem; border-block: 1px solid var(--line); }
+.facts div { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.facts dt { font: 500 0.6875rem/1.2 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.dots { display: inline-flex; gap: 0.2rem; }
+.dots i { width: 0.6rem; height: 0.6rem; border-radius: 50%; border: 1.5px solid var(--muted); display: block; }
+.dots i.on { background: var(--fg); border-color: var(--fg); }
+.sec { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+h3 { font: 500 0.75rem/1.2 var(--font-mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.sec p { max-width: 64ch; }
+.list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.45rem; }
+.list li { position: relative; padding-left: 1.1rem; max-width: 66ch; }
+.list li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 0.45rem; height: 0.45rem; border-radius: 1px; background: hsl(var(--h) 50% 48%); }
+.cases { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 0.5rem; overflow: hidden; }
+.cases li { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 0.25rem 1.25rem; padding: 0.7rem 0.9rem; border-top: 1px solid var(--line); }
+.cases li:first-child { border-top: 0; }
+.cases b { font-weight: 600; }
+.cases .ref { color: var(--muted); font-size: 0.9375rem; overflow-wrap: anywhere; }
+@media (max-width: 38rem) { .cases li { grid-template-columns: minmax(0, 1fr); } }
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.chip { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 0.35rem 0.8rem; font-size: 0.875rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.45rem; }
+.chip:hover { border-color: var(--fg); }
+.chip i { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: hsl(var(--h) 50% 48%); display: block; }
+.tag { font-size: 0.875rem; color: var(--muted); border: 1px dashed var(--line); border-radius: 999px; padding: 0.3rem 0.75rem; }
+.todo { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.todo li { display: flex; gap: 0.7rem; align-items: baseline; max-width: 66ch; }
+.todo .mk { flex: none; width: 1.2rem; height: 1.2rem; border-radius: 50%; display: inline-grid; place-items: center; font: 600 0.75rem/1 var(--font-mono); transform: translateY(0.2rem); }
+.todo .mk.ok { background: var(--ok); color: var(--panel); }
+.todo .mk.wait { border: 1.5px solid var(--lamp); color: var(--lamp); }
+.prompt-box { display: flex; flex-direction: column; gap: 0.6rem; }
+pre.prompt { margin: 0; padding: 0.9rem 1rem; background: var(--bg); border: 1px solid var(--line); border-radius: 0.5rem; font: 400 0.8125rem/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+.btnrow { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+.btn { background: var(--fg); color: var(--bg); border: 0; border-radius: 0.5rem; padding: 0.6rem 1.1rem; font-weight: 600; cursor: pointer; }
+.btn:hover { opacity: 0.88; }
+.status { font-size: 0.875rem; color: var(--ok); min-height: 1.4em; }
+
+/* raccourcis */
+.sc { display: flex; flex-direction: column; gap: 1.1rem; }
+.sc h2 { font-size: clamp(1.35rem, 3vw, 1.75rem); }
+.sc .intro { color: var(--muted); max-width: 62ch; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); gap: 1rem; }
+.card { display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.9rem; border-top: 3px solid hsl(var(--h) 50% 48%); min-width: 0; }
+.card .for { font: 500 0.6875rem/1.2 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.card h3 { font: 600 1.0625rem/1.25 var(--font-body); letter-spacing: 0; text-transform: none; color: var(--fg); }
+.card p { color: var(--muted); font-size: 0.9375rem; }
+
+.notes { display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.875rem; color: var(--muted); max-width: 66ch; border-top: 1px solid var(--line); padding-top: 1.25rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sector, .sector path.body { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <div class="eyebrow">PhysicsLab 3D · fin du domaine Mécanique</div>
+    <h1>Roue des domaines</h1>
+    <p class="lead">Neuf domaines, dans l'ordre prévu au départ. Clique sur un secteur pour voir ce qu'il demande, ce qui est déjà prêt et comment on vérifie le résultat. Le domaine proposé en premier est <strong>les Ondes</strong>.</p>
+  </header>
+
+  <section class="stage" aria-label="Choix du prochain domaine">
+    <div class="wheelbox">
+      <svg id="wheel" class="wheel" viewBox="-240 -240 480 480" role="group" aria-label="Roue des neuf domaines"></svg>
+      <div class="legend" aria-hidden="true">
+        <span><i class="sw chk" style="background:var(--ok)"></i> terminé</span>
+        <span><i class="sw lamp"></i> proposé</span>
+        <span><i class="sw dash"></i> domaines dont celui-ci dépend</span>
+      </div>
+      <p class="keys">Au clavier : flèches pour passer d'un secteur à l'autre.</p>
+    </div>
+    <article id="detail" class="detail" aria-live="polite"></article>
+  </section>
+
+  <section class="sc" aria-labelledby="sc-h">
+    <h2 id="sc-h">Raccourcis qui sortent de l'ordre</h2>
+    <p class="intro">Quatre petits modules déjà à portée de ce qui existe. Chacun peut s'insérer avant le prochain domaine, ou en ouvrir un.</p>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <footer class="notes">
+    <p>La difficulté et le nombre de modules sont des estimations, à confirmer par la feuille de route courte de chaque domaine avant de coder.</p>
+    <p>Les valeurs de référence viennent de la littérature, certaines de mémoire. Aucune n'est une mesure du logiciel : chacune sera revérifiée au moment d'écrire le module correspondant.</p>
+    <p>À prévoir plus tard : une notice d'utilisation du logiciel (comment il marche, panneau par panneau). Elle n'est pas encore écrite.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var START = "Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges), puis `README.md`. Vérifie que ça compile et que les tests passent (section 5, y compris `--gpu-test`). La Mécanique est terminée (M0 à M7) ; le devlog (`docs/devlog/`) et le cours (`docs/cours/`) sont dans le dépôt. Présente-moi la feuille de route courte du domaine « %N » (concepts, équations, difficultés, simulations, cas de référence) avant de coder. Réponses courtes, en français.";
+
+  /* ---------------------------------------------------------------- données */
+  var D = [
+    {
+      id: "mecanique", h: 215, state: "done", lines: ["Mécanique"], name: "Mécanique",
+      pitch: "Huit modules, de M0 à M7 : du projectile au N-corps sur GPU. Ce domaine sert de socle à tous les autres.",
+      also: ["Chaos"],
+      delivered: [
+        "Socle : CMake, fenêtre, interface ImGui, maths, interface Solver, six niveaux (M0)",
+        "Projectile et cinq solveurs : Euler, Euler symplectique, Verlet, RK4, RK45 adaptatif (M1)",
+        "Ressort-masse et résonance (M2), pendule simple et pendule double chaotique (M3)",
+        "Gravitation de Kepler et N-corps sur CPU (M4)",
+        "Frottements, chocs, rebonds et berceau de Newton (M5)",
+        "Corps rigide : solides libres, toupie, quatre intégrateurs d'orientation (M6)",
+        "N-corps sur GPU en compute shader, comparé au CPU en double précision (M7)"
+      ],
+      todo: [
+        { ok: true, t: "Devlog complet, un fichier par module (docs/devlog/)" },
+        { ok: true, t: "Cours en Word et PDF, 75 pages, 64 exercices corrigés (docs/cours/)" },
+        { ok: true, t: "Roue des domaines (cette page)" },
+        { ok: true, t: "Prompt de reprise court (docs/PASSATION.md, section 8)" },
+        { ok: false, t: "Merge de module/mecanique dans main, puis tag mecanique-1 : en attente de l'accord de l'utilisateur" }
+      ],
+      deps: []
+    },
+    {
+      id: "ondes", h: 172, state: "next", lines: ["Ondes"], name: "Ondes (acoustique, optique)",
+      pitch: "Une perturbation qui se propage : corde, son, lumière. C'est la première simulation de champ sur une grille.",
+      diff: 3, mods: "≈ 6", also: ["Acoustique", "Optique"], deps: ["mecanique"],
+      why: "Passer de quelques corps à un champ continu est le pas le plus naturel après la Mécanique. Une corde est une chaîne de ressorts-masses (M2), et l'équation d'onde se résout avec le schéma saute-mouton, c'est-à-dire le Verlet des orbites. Les grilles et les calculs en pochoir (chaque case lit ses voisines) écrits ici serviront ensuite à l'électromagnétisme, aux fluides et au quantique.",
+      reuse: [
+        "Ressort-masse (M2) : une corde est une chaîne d'oscillateurs couplés, ses modes propres sont ses résonances",
+        "Verlet et RK4 (M1) : le même schéma d'intégration, appliqué à chaque case de la grille",
+        "Compute shaders (M7) : même organisation des noyaux de calcul, avec une grille au lieu de particules",
+        "Panneau d'analyse, étude de convergence, comparaison au cas exact : toute la méthode de validation"
+      ],
+      build: [
+        "Champ sur grille 1D et 2D, en double sur CPU et en float sur GPU",
+        "Condition de stabilité CFL et mesure de la dispersion numérique",
+        "Bords absorbants, pour que les ondes ne rebondissent pas sur le cadre",
+        "Dessin d'un champ : surface en relief et carte de couleurs",
+        "Transformée de Fourier rapide (FFT) pour les spectres et les modes"
+      ],
+      sims: [
+        ["Corde vibrante", "fréquences propres f_n = n·c / (2L), solution de d'Alembert"],
+        ["Dispersion numérique", "vitesse de phase de la grille comparée à c ; stabilité tant que c·Δt / Δx ≤ 1 en 1D"],
+        ["Cuve à ondes 2D", "réflexion, réfraction (loi de Snell-Descartes), amplitude d'une onde circulaire en 1/√r"],
+        ["Interférences de Young et diffraction par une fente", "interfrange i = λ·D / a ; premier minimum de la fente à sin θ = λ / a"],
+        ["Tuyau d'orgue et effet Doppler", "tuyau ouvert f_n = n·v / (2L) ; source qui approche f' = f·v / (v − v_s)"]
+      ]
+    },
+    {
+      id: "thermo", h: 18, state: "todo", lines: ["Thermo-", "dynamique"], name: "Thermodynamique",
+      pitch: "Un très grand nombre de particules dont on ne regarde que la moyenne : température, pression, entropie.",
+      diff: 3, mods: "≈ 6", also: ["Solide", "Cryogénie"], deps: ["mecanique", "ondes"],
+      why: "Le gaz parfait se simule avec ce qui existe déjà : des particules, des chocs (M5) et un calcul de forces sur GPU (M7). C'est aussi le domaine où l'on voit pourquoi le temps a un sens, avec le chaos de la Mécanique en arrière-plan.",
+      reuse: [
+        "Chocs élastiques et rebonds sur les parois (M5)",
+        "Calcul de forces sur GPU (M7), avec une force de Lennard-Jones à la place de la gravité",
+        "Verlet, qui garde bien l'énergie sur de longues durées (M1)",
+        "Chaos et exposant de Lyapunov (M3) : la perte de mémoire des conditions initiales",
+        "Grilles des Ondes, pour l'équation de la chaleur"
+      ],
+      build: [
+        "Listes de voisins par cellules, pour passer de N² à N interactions",
+        "Thermostat (Langevin ou Nosé-Hoover)",
+        "Mesures statistiques : température, pression, distribution des vitesses, fonction g(r)",
+        "Générateur aléatoire sur GPU, pour les méthodes de Monte-Carlo"
+      ],
+      sims: [
+        ["Gaz parfait en boîte", "distribution de Maxwell-Boltzmann ; P·V = N·k·T"],
+        ["Détente de Joule", "entropie gagnée ΔS = N·k·ln 2 quand le volume double"],
+        ["Mouvement brownien", "⟨x²⟩ = 2·D·t en dimension 1 (Einstein)"],
+        ["Diffusion de la chaleur", "gaussienne qui s'étale, σ² = 2·D·t"],
+        ["Modèle d'Ising 2D", "température critique T_c = 2J / (k·ln(1+√2)) ≈ 2,269·J / k (Onsager)"]
+      ]
+    },
+    {
+      id: "electro", h: 285, state: "todo", lines: ["Électro-", "dynamique"], name: "Électrodynamique",
+      pitch: "Charges, champs électriques et magnétiques, et la lumière comme onde électromagnétique.",
+      diff: 4, mods: "≈ 7", also: ["Magnétisme", "Électronique"], deps: ["mecanique", "ondes"],
+      why: "Deux idées nouvelles seulement : la force de Lorentz sur des particules et les équations de Maxwell sur une grille. Les Ondes ont déjà fourni la grille et l'équation d'onde. La force de Coulomb a la même forme que la gravité : le N-corps GPU se réutilise presque tel quel, avec des charges de signes opposés.",
+      reuse: [
+        "N-corps sur GPU : la force en 1/r² de Coulomb ressemble à celle de la gravité (M4, M7)",
+        "Grille et schéma saute-mouton des Ondes, qui deviennent la méthode FDTD",
+        "Circuit RLC : même équation que le ressort amorti forcé (M2)"
+      ],
+      build: [
+        "Intégrateur de Boris, qui garde l'énergie d'une rotation dans un champ magnétique",
+        "Résolution de l'équation de Poisson (relaxation, puis multigrille)",
+        "Grille de Yee et méthode FDTD pour les équations de Maxwell",
+        "Champs de vecteurs en 3D : flèches et lignes de champ",
+        "Loi de Biot et Savart"
+      ],
+      sims: [
+        ["Particule dans un champ magnétique uniforme", "rayon r = m·v⊥ / (|q|·B), pulsation ω = |q|·B / m"],
+        ["Dérive E×B", "vitesse de dérive v = E / B"],
+        ["Bobines de Helmholtz", "champ au centre B = (4/5)^(3/2) · μ0·N·I / R ≈ 0,716 · μ0·N·I / R"],
+        ["Onde électromagnétique en FDTD", "vitesse c = 1 / √(ε0·μ0) ; réflexion et transmission à une interface"],
+        ["Circuit RLC", "pulsation propre 1 / √(L·C), facteur de qualité Q"],
+        ["Rayonnement d'un dipôle oscillant", "puissance rayonnée proportionnelle à ω⁴"]
+      ]
+    },
+    {
+      id: "fluides", h: 198, state: "todo", lines: ["Fluides"], name: "Fluides",
+      pitch: "Eau, air, fumée : un champ de vitesse qui se déplace avec ce qu'il transporte.",
+      diff: 5, mods: "≈ 8", also: ["Milieux continus"], deps: ["mecanique", "ondes", "electro", "thermo"],
+      why: "C'est le domaine le plus gourmand : sans le GPU rien ne tourne en temps réel. Il vient après l'Électrodynamique parce qu'il réutilise son solveur de Poisson (la pression), et après les Ondes pour le transport sur grille.",
+      reuse: [
+        "Compute shaders et mesures de temps relues en lot (M7)",
+        "Solveur de Poisson de l'Électrodynamique, pour la pression",
+        "Listes de voisins de la Thermodynamique, pour les méthodes à particules (SPH)"
+      ],
+      build: [
+        "Transport (advection) semi-lagrangien sur grille 2D, puis 3D",
+        "Projection de pression qui rend l'écoulement incompressible",
+        "Méthode de Boltzmann sur réseau (D2Q9), très adaptée au GPU",
+        "Particules à noyau lissé (SPH) pour les surfaces libres",
+        "Parois, obstacles et traceurs de fumée ; rendu de la vorticité et des lignes de courant"
+      ],
+      sims: [
+        ["Écoulement de Poiseuille", "profil parabolique exact dans un canal"],
+        ["Tourbillon de Taylor-Green", "décroissance exponentielle exacte de la vitesse, ∝ e^(−2νt) pour k = 1"],
+        ["Cavité entraînée", "profils de vitesse publiés par Ghia et coll. (1982) à Re = 100 et 1000"],
+        ["Allée de Bénard-von Kármán derrière un cylindre", "nombre de Strouhal d'environ 0,16 à Re = 100"],
+        ["Rupture de barrage (SPH)", "front d'onde comparé à la solution de Ritter, vitesse 2·√(g·h)"],
+        ["Convection de Rayleigh-Bénard", "seuil de convection Ra_c ≈ 1708 entre deux parois rigides"]
+      ]
+    },
+    {
+      id: "plasma", h: 330, state: "todo", lines: ["Plasma"], name: "Plasma",
+      pitch: "Des millions de charges qui créent les champs qui les font bouger.",
+      diff: 5, mods: "≈ 5", also: [], deps: ["electro", "fluides", "thermo"],
+      why: "Le plasma assemble deux domaines déjà faits : les particules chargées de l'Électrodynamique et les écoulements des Fluides. La méthode particules-dans-une-cellule (PIC) tourne en quatre temps : déposer les charges sur la grille, résoudre le champ, le lire à chaque particule, pousser la particule.",
+      reuse: [
+        "Intégrateur de Boris et solveur de Poisson ou de Maxwell (Électrodynamique)",
+        "Grilles et transport (Fluides)",
+        "Calcul GPU et générateur aléatoire (Thermodynamique)"
+      ],
+      build: [
+        "Boucle PIC complète : dépôt, champ, lecture, poussée",
+        "Dépôt de charge sur GPU avec opérations atomiques",
+        "Diagnostics : spectres de Fourier en espace et en temps, distribution des vitesses",
+        "Fluide magnétisé (MHD) dans un second temps"
+      ],
+      sims: [
+        ["Oscillation de plasma", "pulsation ω_p = √(n·e² / (ε0·m))"],
+        ["Écrantage de Debye", "longueur λ_D = √(ε0·k·T / (n·e²))"],
+        ["Instabilité à deux faisceaux", "croissance exponentielle dont le taux se déduit de la relation de dispersion (à établir avant de coder)"],
+        ["Amortissement de Landau", "taux d'amortissement connu analytiquement pour les petites longueurs d'onde"],
+        ["Particule dans un champ magnétique non uniforme", "moment magnétique m·v⊥² / (2B) conservé (invariant adiabatique)"]
+      ]
+    },
+    {
+      id: "quantique", h: 250, state: "todo", lines: ["Quantique"], name: "Atomique, quantique, nucléaire",
+      pitch: "Des ondes de probabilité : l'électron, l'atome, le noyau qui se désintègre.",
+      diff: 4, mods: "≈ 7", also: ["Moléculaire", "Information quantique", "Particules"], deps: ["mecanique", "ondes"],
+      why: "Les mathématiques changent (nombres complexes, états propres), mais l'équation de Schrödinger reste une équation d'onde : la grille, la FFT et le schéma en temps viennent des Ondes. Ce domaine peut donc passer juste après elles si le quantique prime. Les orbites en hyperbole de Rutherford complètent aussi Kepler, qui ne traite pas encore les excentricités e ≥ 1.",
+      reuse: [
+        "Grille, FFT et bords absorbants des Ondes",
+        "Oscillateur harmonique (M2) : premier problème quantique",
+        "Orbites de Kepler (M4a) : la diffusion de Rutherford est une hyperbole"
+      ],
+      build: [
+        "Nombres complexes et champ complexe sur grille",
+        "Évolution de Schrödinger : split-step avec FFT, ou Crank-Nicolson",
+        "Recherche des états propres par diagonalisation",
+        "Harmoniques sphériques et rendu 3D des orbitales",
+        "Désintégrations aléatoires (Monte-Carlo)",
+        "Outils annexes prévus au départ : tableau périodique, constantes fondamentales, convertisseur d'unités"
+      ],
+      sims: [
+        ["Puits infini", "niveaux E_n = n²·π²·ħ² / (2·m·L²)"],
+        ["Oscillateur harmonique quantique", "niveaux E_n = (n + ½)·ħ·ω"],
+        ["Paquet d'onde libre", "étalement exact σ(t) = σ0 · √(1 + (ħ·t / (2·m·σ0²))²)"],
+        ["Effet tunnel sur une barrière", "coefficient de transmission d'une barrière rectangulaire, formule exacte"],
+        ["Atome d'hydrogène", "niveaux E_n = −13,6 eV / n²"],
+        ["Désintégration radioactive et chaîne de Bateman", "N(t) = N0·e^(−λt), demi-vie ln 2 / λ"]
+      ]
+    },
+    {
+      id: "relativite", h: 38, state: "todo", lines: ["Relativité"], name: "Relativité, astrophysique, cosmologie",
+      pitch: "Temps et espace déformés : de la vitesse proche de celle de la lumière aux trous noirs et à l'univers entier.",
+      diff: 5, mods: "≈ 8", also: ["Astro", "Cosmologie"], deps: ["mecanique"],
+      why: "Le terrain est préparé par la gravitation de M4 et de M7 : Kepler avec sa précession numérique, le N-corps sur GPU. On y ajoute la correction relativiste, puis, avec un arbre de Barnes-Hut (noté comme manque en M7), des galaxies entières.",
+      reuse: [
+        "Kepler et précession numérique (M4a) : à comparer à la précession relativiste",
+        "N-corps sur GPU et sphères de Plummer (M7) : amas et galaxies",
+        "RK45 adaptatif (M1), pour intégrer les géodésiques"
+      ],
+      build: [
+        "Type tenseur (noté absent dans la passation)",
+        "Géodésiques de Schwarzschild, en RK45 ou avec un schéma symplectique",
+        "Lancer de rayons sur GPU pour la déviation de la lumière",
+        "Arbre de Barnes-Hut, N·log N interactions au lieu de N², pour les grands amas",
+        "Équations de Friedmann pour l'expansion de l'univers"
+      ],
+      sims: [
+        ["Dilatation du temps, paradoxe des jumeaux", "facteur de Lorentz γ = 1 / √(1 − v²/c²)"],
+        ["Précession du périhélie de Mercure", "environ 43 secondes d'arc par siècle ; 6π·G·M / (c²·a·(1−e²)) par tour"],
+        ["Déviation de la lumière par le Soleil", "4·G·M / (c²·R) ≈ 1,75 seconde d'arc au bord"],
+        ["Ombre d'un trou noir", "paramètre d'impact critique 3√3 · G·M / c² ≈ 5,196 · G·M / c²"],
+        ["Expansion de l'univers (Friedmann)", "univers plat rempli de matière : âge t = 2 / (3·H0)"]
+      ]
+    },
+    {
+      id: "appliques", h: 125, state: "todo", lines: ["Appliqués"], name: "Domaines appliqués",
+      pitch: "Les outils des autres domaines mis au service d'un cas concret : épidémie, cœur, séisme, climat.",
+      diff: 3, mods: "6 à 10", also: ["Géophysique", "Météo", "Biophysique", "Médical"], deps: ["ondes", "thermo", "fluides"],
+      note: "difficulté très variable d'un cas à l'autre",
+      why: "À la fin, parce que chaque simulation emprunte à plusieurs domaines : les ondes pour l'échographie et les séismes, les fluides pour le sang et l'atmosphère, la thermodynamique pour le climat. C'est aussi le domaine qui parle le plus aux élèves.",
+      reuse: [
+        "Ondes : échographie, séismes",
+        "Fluides : écoulement sanguin, météo, tsunamis",
+        "Thermodynamique : bilan d'énergie, diffusion",
+        "Équations différentielles et chaos : épidémies, populations"
+      ],
+      build: [
+        "Import et export de données réelles (prévu pour le niveau 6)",
+        "Cartes et projection de la sphère terrestre",
+        "Modèles à compartiments (équations différentielles couplées)",
+        "Équations en eau peu profonde"
+      ],
+      sims: [
+        ["Épidémie SIR", "seuil R0 = β / γ ; taille finale donnée par une équation implicite"],
+        ["Proies et prédateurs de Lotka-Volterra", "grandeur conservée exacte, qui sert de test comme l'énergie"],
+        ["Bilan d'énergie de la Terre", "équilibre à environ 255 K sans effet de serre (albédo 0,3), contre 288 K observés"],
+        ["Ondes sismiques P et S", "v_P = √((K + 4G/3) / ρ) et v_S = √(G / ρ)"],
+        ["Attracteur de Lorenz", "σ = 10, ρ = 28, β = 8/3 ; exposant de Lyapunov d'environ 0,9"],
+        ["Tsunami en eau peu profonde", "vitesse des ondes c = √(g·h)"]
+      ]
+    }
+  ];
+
+  var SHORT = [
+    { h: 18, f: "Ouvre la Thermodynamique", t: "Dynamique moléculaire (Lennard-Jones)", p: "Le calcul de forces GPU de M7 et le Verlet de M1 suffisent pour commencer sans attendre : il faut changer la force et ajouter des listes de voisins." },
+    { h: 215, f: "Prolonge la Mécanique", t: "Attracteur de Lorenz", p: "Une suite naturelle du pendule double chaotique : trois équations, le RK4 déjà écrit, et un résultat très visuel à mesurer avec l'exposant de Lyapunov." },
+    { h: 285, f: "Ouvre l'Électrodynamique", t: "Circuit RLC", p: "Même équation que le ressort amorti forcé de M2 : inductance, résistance et capacité remplacent masse, frottement et raideur. Un module court." },
+    { h: 38, f: "Ouvre la Relativité", t: "Précession relativiste de Mercure", p: "Kepler (M4a) calcule déjà une précession numérique. Ajouter le terme relativiste donne un premier pont vers la Relativité générale." }
+  ];
+
+  var byId = {};
+  D.forEach(function (d, i) { d.n = i + 1; byId[d.id] = d; });
+
+  /* ---------------------------------------------------------------- utilitaires */
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  // espaces insécables avant ; : ? ! et autour des guillemets français
+  function fr(s) {
+    return esc(s)
+      .replace(/ ([;:?!])/g, " $1")
+      .replace(/« /g, "« ")
+      .replace(/ »/g, " »");
+  }
+  function stateLabel(d) {
+    return d.state === "done" ? "Terminé" : d.state === "next" ? "Proposé en premier" : "À venir";
+  }
+
+  /* ---------------------------------------------------------------- roue */
+  var R1 = 104, R2 = 212, RL = 156, RLAMP = 221, SPAN = 40;
+  var svg = document.getElementById("wheel");
+  var NS = "http://www.w3.org/2000/svg";
+
+  function pt(r, a) { return [r * Math.cos(a), r * Math.sin(a)]; }
+  function f2(x) { return x.toFixed(2); }
+  function sectorPath(a0, a1) {
+    var p0 = pt(R2, a0), p1 = pt(R2, a1), p2 = pt(R1, a1), p3 = pt(R1, a0);
+    return "M" + f2(p0[0]) + "," + f2(p0[1]) + "A" + R2 + "," + R2 + " 0 0 1 " + f2(p1[0]) + "," + f2(p1[1]) +
+      "L" + f2(p2[0]) + "," + f2(p2[1]) + "A" + R1 + "," + R1 + " 0 0 0 " + f2(p3[0]) + "," + f2(p3[1]) + "Z";
+  }
+  function lampPath(a0, a1) {
+    var p0 = pt(RLAMP, a0), p1 = pt(RLAMP, a1);
+    return "M" + f2(p0[0]) + "," + f2(p0[1]) + "A" + RLAMP + "," + RLAMP + " 0 0 1 " + f2(p1[0]) + "," + f2(p1[1]);
+  }
+  function el(name, attrs, parent) {
+    var e = document.createElementNS(NS, name);
+    for (var k in attrs) { if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]); }
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  var sectorEls = [];
+  D.forEach(function (d, i) {
+    var mid = (-90 + i * SPAN) * Math.PI / 180;
+    var half = (SPAN / 2) * Math.PI / 180;
+    var g = el("g", {
+      "class": "sector", "data-id": d.id, role: "button", tabindex: "-1", "aria-pressed": "false",
+      "aria-label": d.name + ", domaine " + d.n + " sur " + D.length + ", " + stateLabel(d).toLowerCase()
+    }, svg);
+    g.style.setProperty("--h", d.h);
+    g.style.setProperty("--tx", f2(Math.cos(mid) * 9) + "px");
+    g.style.setProperty("--ty", f2(Math.sin(mid) * 9) + "px");
+    el("path", { "class": "body", d: sectorPath(mid - half, mid + half) }, g);
+    if (d.state === "next") {
+      el("path", { "class": "lampArc", d: lampPath(mid - half + 0.04, mid + half - 0.04) }, g);
+    }
+
+    var c = pt(RL, mid);
+    var n = d.lines.length;
+    var lh = 17;
+    d.lines.forEach(function (ln, k) {
+      var t = el("text", { "class": "nm", x: f2(c[0]), y: f2(c[1] + (k - (n - 1) / 2) * lh + 5) }, g);
+      t.textContent = ln;
+    });
+    var ny = c[1] + (-(n - 1) / 2 - 1) * lh - 1;
+    var no = el("text", { "class": "no", x: f2(c[0] - (d.state === "done" ? 6 : 0)), y: f2(ny) }, g);
+    no.textContent = String(d.n);
+    if (d.state === "done") {
+      var tx = c[0] + 6, ty = ny - 4;
+      el("polyline", { "class": "tick", points: f2(tx - 4) + "," + f2(ty) + " " + f2(tx - 1) + "," + f2(ty + 3.5) + " " + f2(tx + 5) + "," + f2(ty - 4) }, g);
+    }
+    g.addEventListener("click", function () { choose(d.id, false); });
+    g.addEventListener("keydown", function (ev) {
+      var k = ev.key, to = null;
+      if (k === "Enter" || k === " ") { ev.preventDefault(); choose(d.id, false); return; }
+      if (k === "ArrowRight" || k === "ArrowDown") to = (i + 1) % D.length;
+      else if (k === "ArrowLeft" || k === "ArrowUp") to = (i + D.length - 1) % D.length;
+      else if (k === "Home") to = 0;
+      else if (k === "End") to = D.length - 1;
+      if (to !== null) { ev.preventDefault(); choose(D[to].id, true); }
+    });
+    sectorEls.push(g);
+  });
+
+  // moyeu
+  el("circle", { "class": "hub", r: "94" }, svg);
+  var hubTop = el("text", { "class": "hubTop", x: "0", y: "-34" }, svg);
+  var hubName = el("text", { "class": "hubName", x: "0", y: "0" }, svg);
+  var hubName2 = el("text", { "class": "hubName", x: "0", y: "0" }, svg);
+  var hubState = el("text", { "class": "hubState", x: "0", y: "40" }, svg);
+
+  /* ---------------------------------------------------------------- panneau */
+  var detail = document.getElementById("detail");
+  var cur = null;
+  var copyTimer = null;
+
+  function dots(n) {
+    var s = '<span class="dots" role="img" aria-label="' + n + ' sur 5">';
+    for (var i = 1; i <= 5; i++) s += '<i class="' + (i <= n ? "on" : "") + '"></i>';
+    return s + "</span>";
+  }
+  function list(items) {
+    return '<ul class="list">' + items.map(function (x) { return "<li>" + fr(x) + "</li>"; }).join("") + "</ul>";
+  }
+  function depChips(ids) {
+    if (!ids.length) return "";
+    return '<div class="sec"><h3>S’appuie sur</h3><div class="chips">' +
+      ids.map(function (id) {
+        var d = byId[id];
+        return '<button type="button" class="chip" data-go="' + id + '" style="--h:' + d.h + '"><i></i>' + fr(d.name.split(" (")[0].split(",")[0]) + "</button>";
+      }).join("") + "</div></div>";
+  }
+  function alsoTags(arr) {
+    if (!arr.length) return "";
+    return '<div class="sec"><h3>Rattaché ici (proposition)</h3><div class="chips">' +
+      arr.map(function (x) { return '<span class="tag">' + fr(x) + "</span>"; }).join("") + "</div></div>";
+  }
+
+  function renderDetail(d) {
+    var h = "";
+    h += '<div class="dhead" style="--h:' + d.h + '">';
+    h += '<div class="pills"><span class="pill ' + d.state + '">' + stateLabel(d) + '</span><span class="pill">Domaine ' + d.n + " sur " + D.length + "</span></div>";
+    h += "<h2>" + fr(d.name) + "</h2>";
+    h += '<p class="pitch">' + fr(d.pitch) + "</p></div>";
+
+    if (d.state === "done") {
+      h += '<div class="sec" style="--h:' + d.h + '"><h3>Ce qui est livré</h3>' + list(d.delivered) + "</div>";
+      h += '<div class="sec"><h3>Livrables de fin de domaine</h3><ul class="todo">' +
+        d.todo.map(function (x) {
+          return '<li><span class="mk ' + (x.ok ? "ok" : "wait") + '" aria-hidden="true">' + (x.ok ? "✓" : "…") + "</span><span><span class=\"sr\" hidden>" + (x.ok ? "Fait : " : "À faire : ") + "</span>" + fr(x.t) + "</span></li>";
+        }).join("") + "</ul></div>";
+      h += alsoTags(d.also);
+      return h;
+    }
+
+    h += '<dl class="facts"><div><dt>Difficulté</dt><dd>' + dots(d.diff) + "<span>" + d.diff + " sur 5</span></dd></div>" +
+      "<div><dt>Modules estimés</dt><dd>" + fr(d.mods) + "</dd></div>" +
+      "<div><dt>Ordre prévu</dt><dd>" + d.n + " sur " + D.length + "</dd></div></dl>";
+    if (d.note) h += '<p class="pitch" style="margin-top:-0.75rem">' + fr(d.note.charAt(0).toUpperCase() + d.note.slice(1)) + ".</p>";
+
+    h += '<div class="sec"><h3>Pourquoi à cette place</h3><p>' + fr(d.why) + "</p></div>";
+    h += '<div class="sec" style="--h:' + d.h + '"><h3>Ce qui est déjà prêt</h3>' + list(d.reuse) + "</div>";
+    h += '<div class="sec" style="--h:' + d.h + '"><h3>Briques à construire</h3>' + list(d.build) + "</div>";
+    h += '<div class="sec"><h3>Premières simulations et cas de référence</h3><ul class="cases">' +
+      d.sims.map(function (s) { return "<li><b>" + fr(s[0]) + '</b><span class="ref">' + fr(s[1]) + "</span></li>"; }).join("") +
+      "</ul></div>";
+    h += depChips(d.deps);
+    h += alsoTags(d.also);
+    h += '<div class="sec prompt-box"><h3>Prompt de reprise pour ce domaine</h3>' +
+      '<pre class="prompt" id="promptText"></pre>' +
+      '<div class="btnrow"><button type="button" class="btn" id="copyBtn">Copier le prompt</button><span class="status" id="copyStatus" role="status"></span></div></div>';
+    return h;
+  }
+
+  function copyPrompt() {
+    var pre = document.getElementById("promptText");
+    var status = document.getElementById("copyStatus");
+    var text = pre.textContent;
+    function say(msg) {
+      status.textContent = msg;
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(function () { status.textContent = ""; }, 3500);
+    }
+    function fallback() {
+      try {
+        var r = document.createRange();
+        r.selectNodeContents(pre);
+        var s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        var ok = document.execCommand && document.execCommand("copy");
+        say(ok ? "Copié." : "Texte sélectionné : copie-le avec Ctrl+C.");
+      } catch (e) {
+        say("Texte sélectionné : copie-le avec Ctrl+C.");
+      }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { say("Copié."); }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  function choose(id, focus) {
+    var d = byId[id];
+    if (!d) return;
+    cur = id;
+    sectorEls.forEach(function (g) {
+      var gid = g.getAttribute("data-id");
+      var on = gid === id;
+      g.classList.toggle("sel", on);
+      g.classList.toggle("dep", d.deps.indexOf(gid) >= 0);
+      g.setAttribute("aria-pressed", on ? "true" : "false");
+      g.setAttribute("tabindex", on ? "0" : "-1");
+      if (on && focus) g.focus();
+    });
+
+    hubTop.textContent = "Domaine " + d.n;
+    var two = d.lines.length > 1;
+    hubName.textContent = d.lines[0];
+    hubName.setAttribute("y", two ? "-3" : "8");
+    hubName2.textContent = two ? d.lines[1] : "";
+    hubName2.setAttribute("y", "19");
+    hubState.textContent = stateLabel(d);
+    hubState.setAttribute("class", "hubState " + d.state);
+    hubState.setAttribute("y", two ? "42" : "36");
+
+    detail.innerHTML = renderDetail(d);
+    var pre = document.getElementById("promptText");
+    if (pre) pre.textContent = START.replace("%N", d.name);
+    var btn = document.getElementById("copyBtn");
+    if (btn) btn.addEventListener("click", copyPrompt);
+    Array.prototype.forEach.call(detail.querySelectorAll("[data-go]"), function (b) {
+      b.addEventListener("click", function () { choose(b.getAttribute("data-go"), false); });
+    });
+    Array.prototype.forEach.call(detail.querySelectorAll(".sr"), function (s) { s.hidden = false; s.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap"; });
+
+    try { history.replaceState(null, "", "#" + id); } catch (e) { /* adresse inchangée */ }
+  }
+
+  /* ---------------------------------------------------------------- raccourcis */
+  document.getElementById("cards").innerHTML = SHORT.map(function (c) {
+    return '<article class="card" style="--h:' + c.h + '"><span class="for">' + fr(c.f) + "</span><h3>" + fr(c.t) + "</h3><p>" + fr(c.p) + "</p></article>";
+  }).join("");
+
+  /* ---------------------------------------------------------------- départ */
+  var first = "ondes";
+  try {
+    var hash = (location.hash || "").replace("#", "");
+    if (byId[hash]) first = hash;
+  } catch (e) { /* aucun lien profond */ }
+  choose(first, false);
+})();
+</script>
+</body>
+</html>

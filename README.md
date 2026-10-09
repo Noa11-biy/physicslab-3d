@@ -51,15 +51,16 @@ tools/                scripts utilitaires (capture d'écran automatique pour vé
 third_party/          GLFW 3.4, ImGui 1.92 (docking), ImPlot 1.0 en sous-modules ; GLAD généré (GL 4.5 core)
 docs/
   PASSATION.md        état du projet, règles de travail, pièges et prochaine étape (à lire pour reprendre)
-  cours/              cours compilés par module (PDF / Word)
+  cours/              cours compilés par domaine (PDF / Word) : « La mécanique par la simulation »
   devlog/             journal de développement par module
+  roue-des-domaines.html   page à ouvrir dans un navigateur : les 9 domaines, ce qui est prêt, ce qu'il reste à construire
 ```
 
 ## Feuille de route
 
 Ordre de progression (cocher au fil des modules) :
 
-- [ ] Mécanique
+- [x] Mécanique (terminée : devlog, cours et roue des domaines livrés ; merge dans `main` et tag `mecanique-1` à venir)
   - [x] M0 : socle (CMake, fenêtre, ImGui docking, maths, interface Solver, sélecteur de niveau)
   - [x] M1 : projectile avec frottement, comparaison Euler / Euler symplectique / Verlet / RK4 / RK45
   - [x] M2 : ressort-masse (libre, amorti, forcé, résonance)
@@ -76,6 +77,8 @@ Ordre de progression (cocher au fil des modules) :
 - [ ] Atomique / Quantique / Nucléaire
 - [ ] Relativité / Astro / Cosmologie
 - [ ] Domaines appliqués (vivant, santé, géophysique, climat)
+
+À prévoir : une **notice d'utilisation** du logiciel (comment il marche : niveaux, navigation 3D, panneaux, options), distincte du cours de physique. Elle n'est pas encore écrite.
 
 ## Méthode par phénomène
 
