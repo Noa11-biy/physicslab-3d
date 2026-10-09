@@ -1,7 +1,7 @@
 # Passation : PhysicsLab 3D
 
 Ce fichier permet de reprendre le projet dans une nouvelle conversation sans rien perdre. À lire en entier avant de coder.
-Dernière mise à jour : fin du domaine Mécanique (M0 à M7 terminés, dont le N-corps GPU ; devlog, cours, roue des domaines et prompt de reprise livrés), branche `module/mecanique`. Prochaine étape : merge dans `main` et tag `mecanique-1` (à confirmer avec l'utilisateur), puis le domaine suivant choisi avec la roue (proposition : Ondes).
+Dernière mise à jour : domaine **Ondes** commencé, branche `module/ondes` (O0 terminé : FFT, équation d'onde 1D et 2D, bords, module `--sim 12`). La Mécanique (M0 à M7) est terminée, fusionnée dans `main` et taguée `mecanique-1` (2026-10-09, poussée). Feuille de route Ondes validée par l'utilisateur (section 6) ; prochaine étape : O1 (corde vibrante).
 
 ## 1. Rôle et règles de travail
 
@@ -48,9 +48,11 @@ Moléculaire, Information quantique, Particules, Géophysique, Météo, Biophysi
 | M5c | Berceau de Newton (contact de Hertz contre impulsions séquentielles, `--sim 9`) | fait |
 | M6 | Corps rigide (solide libre symétrique et asymétrique, toupie de Lagrange, 4 intégrateurs d'orientation, `--sim 10`) | fait |
 | M7 | N-corps GPU en compute shader (écart CPU/GPU, kick-drift-kick sur GPU, `--sim 11`, `--gpu-test`) | fait |
+| O0 | Ondes, socle : FFT, équation d'onde 1D et 2D (saute-mouton), bords fixe / libre / éponge, relief coloré, solution de d'Alembert (`--sim 12`, `tests/test_waves.cpp`) | fait |
+| O1 à O5 | corde vibrante, dispersion numérique et CFL, cuve à ondes 2D sur GPU, Young et diffraction, acoustique (tuyau, Doppler) | à faire (section 6) |
 
-Dépôt : https://github.com/Noa11-biy/physicslab-3d (public, licence MIT). Branche de travail : `module/mecanique`
-(fin de domaine : merge dans `main` puis tag `mecanique-1`). Conventions de commit : `feat(mecanique): ...`, `fix:`, `docs:`,
+Dépôt : https://github.com/Noa11-biy/physicslab-3d (public, licence MIT). Branche de travail : `module/ondes` (la Mécanique est dans `main`, tag `mecanique-1` ;
+fin de domaine : merge `--no-ff` dans `main` puis tag annoté). Conventions de commit : `feat(mecanique): ...`, `fix:`, `docs:`,
 `build:`, `test:` en français, avec le trailer `Co-Authored-By` demandé par l'environnement. Pousser sur la branche après chaque
 module quand l'utilisateur le demande ou continue la chaîne (c'était son souhait jusqu'ici).
 
@@ -164,6 +166,20 @@ module quand l'utilisateur le demande ou continue la chaîne (c'était son souha
   échelle a = 2 : E / 2 et rayons x 2 exactement ; N = 500, 500 pas de 0,01 : rayon de demi-masse +3,4 %, dE/E 4e-7 ; collision de deux sphères (N = 2000) : P = 1e-16, E = -0,148 (attendu -0,144). **Module `--sim 11`** (N = 2000, Debug) : GPU 1,5 ms par
   pas dont 1,2 ms de calcul pur (le reste : attente, la carte dessine aussi), 655 pas/s ; mode « les deux » : CPU 63,6 ms par pas (build Debug) contre 2,5 ms, soit 25 fois ; écart GPU - CPU 2,9e-5 après quelques unités de temps ; histogramme d'erreur
   centré sur 5e-7 (maximum 2,1e-6).
+- **Ondes, O0** (`tests/test_waves.cpp`, tout est affiché à l'exécution). **FFT** (Cooley-Tukey base 2) : écart à la DFT naïve 2,3e-14 (n = 256), aller-retour 8e-16, Parseval à l'arrondi, sinusoïde d'amplitude 3 : raie 3,000000000000000
+  et bruit hors raie 1,4e-15, gaussienne échantillonnée contre sa transformée continue sqrt(2π) w exp(-k² w² / 2) : 2,2e-16. **Équation d'onde, saute-mouton** u^{n+1} = 2u^n − u^{n−1} + C² Δu^n (C = c dt / dx) : état d'avant u^{−1} par Taylor d'ordre 2.
+  **Énergie discrète conservée EXACTEMENT** E = ½ Σ w dx ((u^n − u^{n−1})/dt)² + ½ c² Σ dx (Du^n)(Du^{n−1}) (poids ½ aux extrémités et ¼ aux coins pour les bords libres) : dérive max 1,5e-15 à 7e-15 sur 5000 pas (1D : fixe-fixe C = 0,8, libre-libre,
+  fixe-libre C = 0,3, libre-fixe C = 1) et 3,7e-15 à 4,9e-15 sur 1500 pas (2D : 4 murs, 4 bords libres, mixte). **Un mode propre de la grille est une solution exacte du schéma** : sin²(ω dt / 2) = C² Σ sin²(k dx / 2) ; écart 4,7e-15 / 1,4e-14 / 4,9e-15
+  (1D fixe-fixe n = 3, libre-libre n = 4, fixe-libre n = 2,5 ; 200 cases, C = 0,8, 500 pas) et 3,9e-15 (2D, mode (2, 3), 60 × 40 cases) ; ω/(c k) = 0,99996669 pour le premier (formule 1 − (1 − C²)(k dx)² / 24 = 1 − 3,3e-5 : accord).
+  **d'Alembert** (bosse gaussienne largeur 0,1, t = 0,8 hors des bords) : à C = 1 écart 1,6e-15 (schéma exact : propagation d'une case par pas, RIEN à mesurer comme ordre) ; à C = 0,5 erreurs 7,001e-3 / 1,724e-3 / 4,317e-4 pour 200 / 400 / 800 cases :
+  **ordre 2,022 puis 1,998**. **Réflexions** (méthode des images : prolongement impair pour un mur fixe, pair pour un bout libre, C = 1, t jusqu'à 3,4 = deux allers-retours) : 1,5e-14 (fixe-fixe), 1,0e-14 (libre-libre), 1,2e-14 (fixe-libre).
+  **Stabilité** (bruit de 1e-3, 1500 pas) : 1D C = 0,99 → max |u| = 1,3e-3, C = 1,00 → 9,4e-4, C = 1,02 → 5e255 ; 2D (limite 1/√2 = 0,7071) C = 0,70 → 1,5e-3, C = 0,72 → 1,8e241. Symétrie x ↔ y du 2D à 6,4e-16 après 180 pas.
+  **Éponge** (u_tt + 2σ u_t = c² Δu devant un mur fixe, σ = σmax s^p) : la formule « réflexion visée R » (σmax = (p + 1) c ln(1/R) / (2 e), e = épaisseur) ne décrit que les ondes COURTES devant la couche. Pour une bosse (largeur 0,1 dans un domaine de 8 m, couche 0,6 m,
+  énergie restante à t = 8 quand l'écho d'un mur serait revenu) : brouillon R = 1e-4, profil s² → **2,1e-2** (on attendait 1e-8) ; **une éponge plus dure réfléchit plus** (zone suramortie, u_t domine, elle se comporte comme un mur pour les grandes longueurs d'onde),
+  **un profil plus lisse aussi** (s³ : 1,3e-2) ; seule l'épaisseur aide : aux réglages retenus le résidu est divisé par 3,95 quand l'épaisseur double (couche 1,2 m : 2,25e-3) et par 3,94 quand la largeur de la bosse est divisée par 2 (0,05 : 2,26e-3), soit environ
+  (largeur / épaisseur)² (avec l'ancien réglage dur l'exposant montait à 2,7). Balayage (R de 0,5 à 1e-8, ordre 1 à 6, couche 0,3 à 1,2 m, largeur 0,05 à 0,4) : optimum R ≈ 0,01 à 0,03 et profil linéaire
+  (ordre 1) ou quadratique. **Défauts retenus : R = 0,03, ordre 1** : 1D 8,89e-3 (couche 0,6 m), 2,25e-3 (1,2 m) ; 2D (carré de 2 m, 160 × 160, couche 30 cases = 0,375 m, bosse de largeur 0,08, C = 0,6, t = 3,5) 3,4e-4 (balayage 2D : 1,8e-3 à 20 cases, 7,4e-5 à 40 cases ; le profil linéaire y est 2 à 3 fois meilleur que le quadratique). Avant l'arrivée de l'onde
+  dans la couche, le calcul avec éponge est identique à celui avec un mur (écart 1e-45). **Module `--sim 12`** : v_phase / c à k = 1/largeur affichée 0,99926 (largeur 0,2, dx = 0,0333, C = 0,6) = formule 1 − (1 − C²)(k dx)² / 24 ; les images de d'Alembert (1D) superposées au calcul.
 
 ## 3. Architecture du code
 
@@ -182,15 +198,18 @@ include/physicslab/
                nutationPeriod, sleepingCriticalSpin ; RotationIntegrator : EulerRotation, RK4Rotation(renormalize), LieHeunRotation, SplittingRotation ; integrateRotation, rotationDistance),
                NBody (nbody::accelerations : interface « force sur chaque particule » découplée de l'intégrateur, reprise par le GPU en M7 ; NBodyProblem::plummer / plummerCollision : sphères de
                Plummer à l'équilibre en O(N), pour l'amas du module GPU)
+  waves/       Fft (Cooley-Tukey base 2 : fft, ifft, dft de référence, amplitudeSpectrum), Wave (O0 : Wave1D et Wave2D, saute-mouton `double`, bords Fixed / Free / Absorbing (éponge : spongeSigmaMax, profil s^ordre),
+               setInitial(u0, v0) avec u^{-1} par Taylor, energy() discrète conservée, maxAbs() qui propage les NaN ; Wave2D::kCflLimit = 1/√2)
   render/      Camera (orbitale, float), Renderer (OpenGL 4.5 DSA : lignes et points colorés ; VBO de flux à décalage, voir pièges M7),
+               FieldPlot (O0 : divergingColor, makeProfile, makeRelief : sommets d'un champ scalaire, sans OpenGL),
                GpuNBody (M7 : accélérations O(N²) par tuiles + kick-drift-kick en SSBO, float ou double, centrage sur le barycentre, potentiel dans le shader, envois découpés à ~50 ms, requêtes de temps par lots)
-src/core, src/mechanics, src/render   implémentations
-src/app/       Application (fenêtre, thème, disposition, menu, boucle), SimulationModule (interface),
-               UiCommon (SolverSet, StepClock, drawResultTable, Series, sliders), un module par simulation ; GpuTest (`--gpu-test`, validation GPU/CPU), GpuNBodyModule (`--sim 11`)
+src/core, src/mechanics, src/waves, src/render   implémentations
+src/app/       Application (fenêtre, thème, disposition, menu rangé par domaine via `SimulationModule::domain()`, boucle), SimulationModule (interface),
+               UiCommon (SolverSet, StepClock, drawResultTable, Series, sliders), un module par simulation ; GpuTest (`--gpu-test`, validation GPU/CPU), GpuNBodyModule (`--sim 11`), WaveModule (`--sim 12`)
 tools/         screenshot.ps1 (capture automatique) ; cours/ (générateur du cours Word et PDF : texte, mise en page, figures, calcul des corrigés)
 docs/          PASSATION.md, devlog/ (un fichier par module), cours/ (Word et PDF), roue-des-domaines.html (page autonome : les 9 domaines, ce qui est prêt, briques à construire, cas de référence, prompt de reprise à copier ; à ouvrir dans un navigateur)
 shaders/       line.vert, line.frag, nbody.comp (accélérations + potentiel), nbody_step.comp (coup de pied et dérive)
-tests/         test_core.cpp (un seul exécutable, CHECK/CHECK_NEAR maison)
+tests/         test_core.cpp (Mécanique, CHECK/CHECK_NEAR maison), test_waves.cpp (Ondes : un exécutable de test par domaine, mêmes macros, valeurs affichées à l'exécution)
 third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; glad généré (GL 4.5 core) versionné
 ```
 
@@ -273,6 +292,12 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
   ne pas y mesurer des temps CPU). (8) Dans l'outil Bash, `VAR=... && (cmd) &` met toute la chaîne en arrière-plan, affectation comprise : redéfinir la variable dans la commande suivante ; stdout redirigé est entièrement tamponné sous Windows (le test
   utilise `setvbuf(_IONBF)`). (9) Le Verlet du `Solver` évalue la force deux fois par pas : sa comparaison avec le GPU (une évaluation) favorise le GPU d'un facteur 2 ; le module CPU garde l'accélération du dernier point (une évaluation).
   (10) Glyphes vérifiés sur captures : Σ, ε, √, φ, ½, ←, ², ×, Δ, ≈.
+- **Ondes / O0** : (1) **À C = 1 le schéma 1D est exact** (une case par pas) : rien à mesurer comme ordre (même piège que la chute libre) ; mesurer l'ordre à C = 0,5. (2) **Une éponge plus dure ou plus lisse réfléchit PLUS** une bosse de grande longueur d'onde (zone suramortie) : la
+  formule de réflexion visée n'est valable que pour les ondes courtes ; régler sur l'énergie restante d'une vraie bosse, pas sur la formule (le PML du niveau 6 existe pour ça). (3) Le nombre de pas se calcule toujours depuis le temps voulu (`lround(t / dt)`, dt = C dx / c) : deux tests avaient
+  le mauvais nombre de pas (320 au lieu de 80 pour t = 0,8). (4) Un test « identique avant l'arrivée de l'onde » exige que la queue gaussienne n'atteigne pas la couche (distance ≥ 10 largeurs). (5) `std::max(m, NaN)` renvoie m : un NaN passe pour un calcul calme ; écrire
+  `if (!(a <= m)) m = a`. (6) Les littéraux composés `(const float[3]){...}` sont du C99, refusés par `-Wpedantic` en C++. (7) L'énergie conservée est le PRODUIT d'un instant par le précédent (E = ½ ‖v‖² + ½ c² ⟨Du^n, Du^{n−1}⟩), avec poids ½ sur les bords libres ; l'énergie instantanée
+  « naïve » n'est conservée qu'à l'ordre 2. (8) Un module qui impose une dimension à un niveau (le niveau 1 force la surface 2D) doit refaire `reset()` dans `drawControls`. (9) `screenshot.ps1 -Wait 0` capture à t ≈ 1,5 s de simulation (3 s de démarrage) : bon moment pour voir l'anneau ; clics
+  niveau 4 à 6 : « Corde (1D) » (175, 323), « Mur » (175, 440), curseur C au niveau 5 (395, 598 = valeur maximale 1,2). (10) Glyphes vérifiés sur captures : ∂, Δ, ½, Σ, √, π, σ, ω, λ, ≤, ≈, ², −, ×.
 - **Interface** : la police Segoe UI n'a pas ∇ ni ∝ (affichés « � ») ; ∂, ᵀ, ω, √, ≈, Δ passent. Plus de 3 colonnes numériques dans « Invariants » (~400 px)
   écrasent la colonne « Méthode » : scinder en deux tableaux. `TextDisabled` ne passe pas à la ligne : utiliser `TextWrapped` colorée pour les notes.
 - **PowerShell 5.1** : `Get-Content -Raw | Set-Content -Encoding utf8` ré-encode les accents (mojibake) et ajoute un BOM. Éditer avec l'outil Edit, ou avec
@@ -301,25 +326,43 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
 
 ```bash
 cmake -S . -B build -G Ninja && cmake --build build           # aucun avertissement attendu (-Wall -Wextra -Wpedantic)
-ctest --test-dir build --output-on-failure                     # "test_core : OK"
-for s in 1 2 3 4 5 6 7 8 9 10 11; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
+ctest --test-dir build --output-on-failure                     # 2 tests : core (Mécanique) et waves (Ondes, "test_waves : OK")
+for s in 1 2 3 4 5 6 7 8 9 10 11 12; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
 ./build/physicslab --gpu-test                                  # M7 : GPU contre CPU (précision, temps, intégration), "gpu-test : OK"
 ```
 Build Debug propre depuis zéro de temps en temps (`-DCMAKE_BUILD_TYPE=Debug` dans un dossier jetable : vérifie les `assert`).
 Vérification visuelle (PowerShell) : `.\tools\screenshot.ps1 -Level 5 -Sim 4 -Wait 8` puis ouvrir le PNG indiqué. Regarder au moins les
 niveaux 1, 3, 5 et 6 d'un nouveau module, et un ancien module pour la non-régression. `-Clicks "x,y;x,y"` simule des clics.
 
-Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
+Options de l'application : `--level 1..6`, `--sim 1..12` (12 = O0 impulsion sur une grille ; 1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
 6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton, 10 = M6 corps rigide, 11 = M7 N corps sur GPU), `--smoke-test`, `--gpu-test [--gpu-max-n N]` (temps jusqu'à N ; 16000 par défaut, 200000 pour le débit maximal ; option CMake `PHYSICSLAB_GPU_TESTS` pour l'ajouter à ctest). Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
 
-## 6. Suite : fin du domaine Mécanique (M0 à M7 terminés ; livrables 1 à 4 faits, reste le merge et le tag)
+## 6. Suite : domaine Ondes (en cours) ; rappel des livrables de la Mécanique (tous faits)
+
+### Domaine Ondes : feuille de route validée par l'utilisateur (2026-10-09, « je te laisse faire »), ≈ 6 modules
+
+Équations : u_tt = c² Δu (d'Alembert f(x − ct) + g(x + ct)) ; corde fixée f_n = n c / (2L) ; saute-mouton sin(ω Δt / 2) = C sin(k Δx / 2), stable si C ≤ 1 (1D) ou 1/√2 (2D) ; Snell n1 sin θ1 = n2 sin θ2 ; Young i = λ D / a, fente simple sin θ = λ / a au premier minimum ; tuyau ouvert f_n = n v / (2L), Doppler f' = f v / (v − v_s).
+
+| Module | Contenu | Cas de référence | État |
+|---|---|---|---|
+| O0 | socle : grilles 1D/2D, FFT, relief coloré, bords (fixe, libre, éponge) | FFT contre DFT, d'Alembert, énergie discrète, modes de la grille, éponge | **fait** (`--sim 12`) |
+| O1 | corde vibrante : chaîne de masses (M2) et limite continue, modes propres, pincement | f_n = n c / (2L), d'Alembert, énergie ; FFT du mouvement = raies aux f_n | à faire |
+| O2 | dispersion numérique et CFL (aussi la dispersion PHYSIQUE de la chaîne de masses : ω = 2 √(k/m) \|sin(k a / 2)\|) | vitesse de phase de la grille contre la formule ; instabilité dès C > 1 ; ordre 2 mesuré à C < 1 | à faire |
+| O3 | cuve à ondes 2D, CPU `double` et GPU `float` (compute shader en pochoir) : source ponctuelle, milieu à indice variable (c(x, y)), réflexion et réfraction | Snell-Descartes, amplitude en 1/√r, écart CPU/GPU | à faire |
+| O4 | interférences de Young et diffraction par une fente (FFT 2D pour Fraunhofer, ou simulation directe) | interfrange λ D / a ; premier minimum sin θ = λ / a | à faire |
+| O5 | acoustique : tuyau d'orgue (ouvert / fermé, correction d'extrémité) et effet Doppler (source mobile : injection sous-maille) | f_n du tuyau ; f' = f v / (v − v_s) | à faire |
+
+Briques O0 prêtes à réutiliser : `waves::Wave1D/2D` (leapfrog, bords, éponge, énergie), `waves::fft`, `FieldPlot`, `WaveModule` (modèle de module à champ). Manquent : c(x, y) variable, source ponctuelle sinusoïdale, FFT 2D, GPU (O3), bords PML (niveau 6 ; l'éponge échoue pour les grandes longueurs d'onde).
+À la fin du domaine, livrer comme pour la Mécanique : devlog `docs/devlog/` (O0 à O5), cours compilé (Word + PDF), roue mise à jour, prompt de reprise ; puis merge `--no-ff` + tag `ondes-1` (à confirmer).
+
+### Rappel : livrables de fin de domaine de la Mécanique (faits)
 
 À faire dans l'ordre, en validant chaque livrable avec l'utilisateur (règle de fin de domaine, section 1) :
 1. **Devlog complet : FAIT** dans `docs/devlog/` (un fichier par module M0 à M7 et un index `README.md` : chronologie, méthode, ordres mesurés, tableau « ce que la mesure a corrigé », comment revérifier). Les chiffres viennent de la section 2 et des journaux de `--gpu-test` ; quatre valeurs clés ont été recalculées sur le code. À tenir à jour si un chiffre change.
 2. **Cours compilé : FAIT** dans `docs/cours/` (`La-mecanique-par-la-simulation.docx` et `.pdf`, 75 pages, environ 27 000 mots) : 7 chapitres, chacun en **six niveaux** (N1 à N6) + « Dans le logiciel » (captures réelles) + exercices rangés par niveau (**64 exercices corrigés**, annexe A) + « À retenir » ; avant-propos, table des matières (champ Word avec numéros de page), conclusion en dix idées, glossaire, formulaire, annexe logiciel, références ; vraies équations Word (OMML) ; figures tracées avec les solveurs du projet. Le générateur est dans `tools/cours/` (voir son README : les pièges de la conversion LibreOffice y sont notés).
 3. **Roue des domaines : FAIT** dans `docs/roue-des-domaines.html` (page autonome, sans serveur ; thème clair/sombre, lisible sur téléphone). Neuf secteurs dans l'ordre prévu ; pour chacun : pourquoi à cette place, ce qui est déjà prêt dans le code, briques à construire, premières simulations avec cas de référence, difficulté et nombre de modules **estimés**, dépendances, prompt de reprise à copier. Proposition : **Ondes** en premier. Quatre « raccourcis » hors ordre (dynamique moléculaire de Lennard-Jones, attracteur de Lorenz, circuit RLC, précession relativiste de Mercure). Les valeurs de référence citées viennent de la littérature (certaines de mémoire) et ne sont pas des mesures du logiciel : les revérifier au moment du module. Pour modifier la roue : le tableau `D` (domaines) et `SHORT` (raccourcis) au début du script de la page.
 4. **Prompt de reprise court : FAIT** (section 8 : il fonctionne tel quel et la roue en donne une version par domaine).
-5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1`** : actions visibles sur le dépôt public, à confirmer avec l'utilisateur avant de les faire (pas encore faits).
+5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1` : FAIT** le 2026-10-09 sur accord de l'utilisateur (merge `--no-ff` `de5dd9f`, tag annoté, `main` et le tag poussés sur GitHub).
 
 **À prévoir plus tard (demande de l'utilisateur, seulement notée, pas écrite) :** une **notice d'utilisation du logiciel** : comment il marche (les six niveaux, la navigation 3D, les panneaux, les curseurs, les options `--level` / `--sim`), pensée pour des élèves et des non-initiés. À faire quand le logiciel aura plusieurs domaines ; à placer dans `docs/` (par exemple `docs/notice/`), à distinguer du cours qui explique la physique.
 
@@ -357,7 +400,7 @@ Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3
 ## 8. Prompt de reprise (à coller dans la nouvelle conversation)
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges), puis `README.md`. Vérifie que ça compile et que les tests passent (section 5, y compris `--gpu-test`).
-> La Mécanique est terminée (M0 à M7) ; le devlog (`docs/devlog/`), le cours (`docs/cours/`) et la roue des domaines (`docs/roue-des-domaines.html`) sont faits. Il reste le merge de `module/mecanique` dans `main` et le tag `mecanique-1`, seulement après mon accord (si ce n'est pas déjà fait, vérifie avec `git branch --show-current` et `git tag`).
-> Ensuite, présente-moi la feuille de route courte du domaine « Ondes » (concepts, équations, difficultés, simulations, cas de référence) avant de coder. Réponses courtes, en français.
+> La Mécanique est terminée et fusionnée dans `main` (tag `mecanique-1`) ; son devlog (`docs/devlog/`), son cours (`docs/cours/`) et la roue des domaines (`docs/roue-des-domaines.html`) sont faits. Le domaine « Ondes » est en cours sur la branche `module/ondes` : la feuille de route validée et l'état (O0 fait, O1 à O5 à faire) sont à la section 6 ; vérifie avec `git branch --show-current` et `git log --oneline`.
+> Continue avec le prochain module non fait (tests avant l'interface, valeurs réelles affichées, pousser après chaque module). Réponses courtes, en français.
 >
-> Pour un autre domaine, remplace « Ondes » par son nom : la roue des domaines donne le prompt prêt à copier pour chacun.
+> Pour commencer un autre domaine, remplace « Ondes » par son nom et demande d'abord la feuille de route courte : la roue des domaines donne le prompt prêt à copier pour chacun.
