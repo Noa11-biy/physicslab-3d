@@ -17,6 +17,7 @@ class SimulationModule {
 public:
     virtual ~SimulationModule() = default;
 
+    virtual const char* domain() const { return "Mécanique"; }  // titre de section dans le menu Simulation
     virtual const char* title() const = 0;                // entrée de menu et en-tête du panneau Explication
     virtual const char* explanation(Level level) const = 0;
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -30,6 +31,7 @@
 #include "PendulumModule.hpp"
 #include "ProjectileModule.hpp"
 #include "SimulationModule.hpp"
+#include "WaveModule.hpp"
 #include "physicslab/core/Level.hpp"
 #include "physicslab/render/Camera.hpp"
 #include "physicslab/render/Renderer.hpp"
@@ -212,9 +214,14 @@ void App::drawMenuBar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Simulation")) {
-        ImGui::TextDisabled("Mécanique");
-        for (int i = 0; i < static_cast<int>(modules_.size()); ++i)
+        const char* section = nullptr;
+        for (int i = 0; i < static_cast<int>(modules_.size()); ++i) {
+            if (!section || std::strcmp(section, modules_[i]->domain()) != 0) {  // nouvelle section du menu
+                section = modules_[i]->domain();
+                ImGui::TextDisabled("%s", section);
+            }
             if (ImGui::MenuItem(modules_[i]->title(), nullptr, i == active_) && i != active_) activate(i);
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Fenêtre")) {
@@ -334,6 +341,7 @@ int App::run(const AppOptions& options) {
     modules_.push_back(std::make_unique<CradleModule>());
     modules_.push_back(std::make_unique<RigidBodyModule>());
     modules_.push_back(std::make_unique<GpuNBodyModule>(PHYSICSLAB_SHADER_DIR));
+    modules_.push_back(std::make_unique<WaveModule>());
     activate(std::clamp(options.simulation - 1, 0, static_cast<int>(modules_.size()) - 1));
 
     using Clock = std::chrono::steady_clock;

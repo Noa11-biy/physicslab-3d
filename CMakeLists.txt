@@ -52,6 +52,7 @@ physicslab_warnings(physicslab_core)
 add_library(physicslab_render STATIC
     src/render/Camera.cpp
     src/render/Renderer.cpp
+    src/render/FieldPlot.cpp
     src/render/GpuNBody.cpp)
 target_include_directories(physicslab_render PUBLIC include)
 target_link_libraries(physicslab_render PUBLIC glad)
@@ -73,7 +74,8 @@ add_executable(physicslab
     src/app/FrictionModule.cpp
     src/app/BounceModule.cpp
     src/app/CradleModule.cpp
-    src/app/RigidBodyModule.cpp)
+    src/app/RigidBodyModule.cpp
+    src/app/WaveModule.cpp)
 target_link_libraries(physicslab PRIVATE physicslab_core physicslab_render glfw imgui implot)
 target_compile_definitions(physicslab PRIVATE
     PHYSICSLAB_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")
