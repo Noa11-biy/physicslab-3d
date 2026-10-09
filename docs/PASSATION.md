@@ -314,7 +314,7 @@ Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3
 ## 6. Suite : livrables de fin de domaine Mécanique (M0 à M7 terminés)
 
 À faire dans l'ordre, en validant chaque livrable avec l'utilisateur (règle de fin de domaine, section 1) :
-1. **Devlog complet** dans `docs/devlog/` : un fichier par module ou un seul, avec les chiffres de la section 2 (qui viennent de l'exécution réelle ; refaire tourner les vérifications avant de citer un chiffre nouveau).
+1. **Devlog complet : FAIT** dans `docs/devlog/` (un fichier par module M0 à M7 et un index `README.md` : chronologie, méthode, ordres mesurés, tableau « ce que la mesure a corrigé », comment revérifier). Les chiffres viennent de la section 2 et des journaux de `--gpu-test` ; quatre valeurs clés ont été recalculées sur le code. À tenir à jour si un chiffre change.
 2. **Cours compilé** (PDF ou Word) dans `docs/cours/`, pour expliquer à des non-initiés (l'utilisateur est professeur et s'en sert avec ses élèves) : de la chute libre au N-corps GPU, un chapitre par module, analogies, schémas, zéro pré-requis.
 3. **Roue des domaines** pour choisir le module suivant (Ondes, Thermodynamique, Électrodynamique, Fluides, Plasma, Atomique/Quantique/Nucléaire, Relativité/Astro/Cosmologie, Appliqués).
 4. **Prompt de reprise court** prêt à copier (section 8 à jour).
