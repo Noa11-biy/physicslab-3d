@@ -1,7 +1,7 @@
 # Passation : PhysicsLab 3D
 
 Ce fichier permet de reprendre le projet dans une nouvelle conversation sans rien perdre. À lire en entier avant de coder.
-Dernière mise à jour : fin de M5c (Mécanique : M0 à M5 terminés : frottement sec, chocs et rebonds, berceau de Newton), branche `module/mecanique`. Prochaine étape : M6 corps rigide (brouillon de feuille de route en section 6, l'utilisateur ne l'a pas encore validé).
+Dernière mise à jour : fin de M6 (Mécanique : M0 à M6 terminés : frottement sec, chocs et rebonds, berceau de Newton, corps rigide), branche `module/mecanique`. Prochaine étape : M7 N-corps GPU, dernier module de la Mécanique (brouillon de feuille de route en section 6, l'utilisateur ne l'a pas encore validé) ; ensuite les livrables de fin de domaine.
 
 ## 1. Rôle et règles de travail
 
@@ -46,8 +46,8 @@ Moléculaire, Information quantique, Particules, Géophysique, Météo, Biophysi
 | M5a | Frottement sec de Coulomb sur plan incliné (événements, adhérence, 3 modèles numériques) | fait |
 | M5b | Chocs et rebonds (restitution, balle rebondissante et accumulation de Zénon, choc de deux billes) | fait |
 | M5c | Berceau de Newton (contact de Hertz contre impulsions séquentielles, `--sim 9`) | fait |
-| **M6** | **Corps rigide (quaternions, toupie, solide libre)** | **à faire (suite logique)** |
-| M7 | N-corps GPU en compute shader (écart CPU/GPU) | à faire |
+| M6 | Corps rigide (solide libre symétrique et asymétrique, toupie de Lagrange, 4 intégrateurs d'orientation, `--sim 10`) | fait |
+| **M7** | **N-corps GPU en compute shader (écart CPU/GPU)** | **à faire (suite logique, dernier module de la Mécanique)** |
 
 Dépôt : https://github.com/Noa11-biy/physicslab-3d (public, licence MIT). Branche de travail : `module/mecanique`
 (fin de domaine : merge dans `main` puis tag `mecanique-1`). Conventions de commit : `feat(mecanique): ...`, `fix:`, `docs:`,
@@ -125,6 +125,26 @@ module quand l'utilisateur le demande ou continue la chaîne (c'était son souha
   symplectique et Verlet : 1,0004 à 10 pas, 1,0000 à 30 pas. **Amortissement de Hunt-Crossley** F = k δ^(3/2) (1 + (3/2) α δ'), v = 1 : e = 0,990099 / 0,952370 / 0,909016 / 0,768 pour α = 0,01 / 0,05 / 0,1 / 0,3, soit
   e ≈ 1/(1 + α v) (écart à 1 − α v : 0,99 (α v)² pour α = 0,01, 0,90 (α v)² pour α = 0,1), perte relative d'énergie 2 α v au premier ordre (0,0197 pour α = 0,01) ; chaîne de 5, α = 0,05 :
   (−0,0553 ; −0,0183 ; −0,0026 ; +0,1488 ; +0,9273), moins de recul qu'en contact conservatif.
+- **Corps rigide (M6)**, convention q : repère du corps → repère fixe, ω dans le repère du corps. **Tenseurs d'inertie** : formules fermées contre une intégration directe sur grille, à 1e-3 (boîte) et
+  5e-3 (sphère, cylindre : erreur de bord en 1/n). **Solide symétrique libre** (I1 = I2) : q(t) = q_L(L t / I1) q0 q_3(−Ω t), Ω = (I3 − I1) ω3 / I1 ; accord avec RK45 serré (relTol 1e-13) à 1e-14 ... 2e-12 sur ω et
+  7e-14 ... 4e-12 sur l'orientation (t = 3 et 25) ; la même formule avec le signe de la rotation propre faux donne 0,56 ... 2,8 (O(1)) : le test est sensible (sauf pour la sphère, Ω = 0). Invariants le long de la
+  trajectoire de référence (I = (1, 2, 3)) : E à 2e-13 et L (vecteur fixe) à 1e-11 jusqu'à t = 100, |q| − 1 à 9e-13. **Fonctions de Jacobi** (séries de Fourier en nome q, DLMF 22.11) contre une intégration RK4 de
+  sn' = cn dn, cn' = −sn dn, dn' = −m sn cn : 1e-10 pour m de 1e-14 à 0,999 ; identités sn² + cn² = 1 à 4e-15 (1,4e-14 pour m = 1e-14), jusqu'à m = 1 − 1e-10 à 4e-15. **Solide asymétrique** (I = (1, 2, 3), départ (a, 0, c),
+  formules de Landau-Lifchitz § 37) : m = 0,75 / 0,1875 / 0,853333 pour (a, c) = (1,5 ; 1) / (2 ; 0,5) / (1,5 ; 0,8), périodes 4K/λ = 8,62606 / 5,72746 / 11,08236 s ; |ω_exact − ω_RK45| ≤ 5,7e-13 pour t ≤ 40,
+  |ω(T) − ω(0)| ≤ 1e-13. **Axe intermédiaire** : λ prévu 0,577350 (ω2 = 1), mesuré 0,577411 (pente de ln|ω1| de t = 8 à 14, écart relatif 1e-4) ; axes extrêmes stables (perturbation de 1,4e-3 → au plus 2,0e-3 sur 100 s).
+  **Intégrateurs d'orientation** (corps I = (1, 2, 3), ω0 = (0,9 ; 0,5 ; 1,1), t = 6,3) : Euler ordre 1 (×2,01 par doublement à 1600 pas), RK4 + renormalisation ordre 4 (×16,06 ; ×263,5 de 100 à 400 pas ; erreur 3,5e-11 à
+  1600 pas), Lie-Heun ordre 2 (×3,99), découpage symplectique ordre 2 (×4,00) et environ 3 fois plus précis que Heun à pas égal (3,7e-2 contre 1,07e-1 à 25 pas) ; avec le couple de la toupie (t = 2) : RK4 ×16,04, Heun ×4,00,
+  découpage ×4,00 (Euler : non asymptotique, NaN à 50 pas). **Dérives sur 1000 s à h = 0,05** (20000 pas, ω0 = (0,1 ; 2 ; 0,1), proche de l'axe instable) : découpage max |ΔL|/L = 6,2e-14 (3,0e-14 à h = 0,2 : indépendant du pas),
+  |q| − 1 = 3e-16, max |ΔE/E| = 6,9e-5 (h = 0,05), 2,74e-4 (0,1), 1,07e-3 (0,2) : en h² (×3,98 puis ×3,9) et le MÊME maximum dans chaque tiers du calcul (aucune dérive) ; RK4 + renormalisation : ΔE/E final −3,1e-6, ΔL/L 1,8e-6,
+  |q| − 1 = 3e-16 ; RK4 sans renormalisation : |q| − 1 = 4e-6, ΔL/L 1,7e-5 ; **Lie-Heun** : |q| = 1 à l'arrondi MAIS ΔE/E +1,4e-2 et ΔL/L 7e-3 (dérive séculaire), **diverge à h = 0,2** (pas 2691) ; Euler diverge au pas 2251 (h = 0,05) et 148
+  (h = 0,2). Euler explicite sur une rotation pure : |q|N = (1 + h² ω²/4)^(N/2) exactement (testé à 1e-12). **Toupie de Lagrange** (m = 1, I = (1,2 ; 1,2 ; 0,4) autour du pivot, l = 0,5) : E, L_z, L_3 conservés à 1e-10 ; précession
+  régulière exacte q(t) = q_z(φ' t) q_x(θ) q_z(ψ' t) contre RK45 : accord à 1e-8 (borne du test) ; exemple θ = 0,6, ω3 = 25 : φ' = 0,517 rad/s (un tour en 12,2 s). **Nutation** par la cubique u'² = f(u) : θ0 = 0,9, ω0 = (0, 2, 20) :
+  u1 = 0,621609968 (= cos 0,9), u2 = 0,926152996, u3 = 5,001797, T = 4K/√(β (u3 − u1)) = 1,069185 s ; u(T/2) − u2 = −2,3e-14, u(T) − u0 = 1,6e-14, u(3T) − u0 = 5e-14 (cos θ de l'interface touche u1 et u2) ; θ0 = 0,6, ω3 = 25, ω0 sans
+  précession : u1 = 0,7791, u2 = 0,8253, T = 0,8357 s. **Toupie endormie** : spin critique 2 √(I1 m g l) / I3 = 12,12847 rad/s ; au-dessus (1,15 / 1,5 / 3 fois) une inclinaison de 0,01 reste ≤ 0,0203 / 0,0134 / 0,0106 ; en dessous (0,7 fois) la
+  croissance est e^(γ t), γ prévu 1,44358, mesuré 1,44357 ; **la toupie ne tombe pas** : de 1e-6 elle monte jusqu'à 1,2457 rad (71°, échantillonné à t = 11 s) puis REMONTE (θ(20 s) ≈ 1e-5) : grande nutation d'un système sans perte
+  fixé au pivot. **Intégrateurs avec couple** (nutation, 100 s à h = 0,005) : découpage ΔL_z/L_z = 2,8e-13 (le couple n'a pas de composante verticale : les « coups » ne la changent pas), ΔE/E 3,9e-5 borné, ΔL_3/L_3 2,8e-5 (L_3 n'est PAS exact) ;
+  RK4 ΔL_z/L_z 5,1e-6, ΔE/E 7,5e-7 (à ce pas RK4 conserve mieux E sur 100 s) ; Heun ΔL_z/L_z 7,5e-3, ΔE/E 2,3e-3 ; Euler diverge. Précession régulière (θ = 0,8, ω3 = 25) sur 10 s en 2000 pas : distance à l'exact RK4 5,0e-5, découpage 2,0e-4,
+  Heun 8,2e-3 ; cos θ : écart 1,3e-6 / 8e-6 / 8,8e-4.
 
 ## 3. Architecture du code
 
@@ -138,6 +158,9 @@ include/physicslab/
                successifs réutilisant ProjectileProblem ; BounceRun : modèles Naive / EventDriven, ContactModel),
                Cradle (hertz:: force, énergie, références exactes de deux billes ; CradleProblem : chaîne de N billes de Hertz avec amortissement de Hunt-Crossley et
                écart initial, run() jusqu'à la fin de la collision, reference() et cradleError() ; cradle:: sequentialImpulses, threeBallFamily),
+               RigidBody (inertia:: sphere/box/cylinder ; RotationState = (q, ω corps) et état plat [q | ω] de 7 nombres ; rotationRhs avec couple optionnel ; FreeBodyProblem : exactSymmetric,
+               exactAsymmetricOmega par jacobiSnCnDn, asymmetricPeriod, intermediateAxisGrowthRate, reference ; HeavyTopProblem : torque, steadyPrecession / exactSteady, nutation() (racines de la cubique) et
+               nutationPeriod, sleepingCriticalSpin ; RotationIntegrator : EulerRotation, RK4Rotation(renormalize), LieHeunRotation, SplittingRotation ; integrateRotation, rotationDistance),
                NBody (nbody::accelerations : interface « force sur chaque particule » découplée de l'intégrateur, reprise par le GPU en M7)
   render/      Camera (orbitale, float), Renderer (OpenGL 4.5 DSA : lignes et points colorés)
 src/core, src/mechanics, src/render   implémentations
@@ -210,6 +233,13 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
   par événement (vitesse relative nulle, puis compression nulle), jamais en échantillonnant le maximum aux pas de RK45 (les pas adaptatifs sont longs : erreur d'échantillonnage non négligeable). La fin de la collision est
   `collisionOver` : plus aucune compression ET vitesses rangées (gauche pas plus rapide que droite) ; la compression seule ne suffit pas. L'ordre de résolution des impulsions
   ne change rien dans le berceau (le brouillon de M5c affirmait le contraire : faux, mesuré). `cradleError` recalcule la référence RK45 à chaque appel (28 appels pour l'étude de convergence : sans à-coup visible, durée non mesurée).
+- **Corps rigide (M6)** : `Quaternion::rotate` n'est valable que pour un quaternion UNITAIRE (sa forme développée diffère de q v q* dès que |q| ≠ 1) : pour dessiner un état dont la norme a dérivé, utiliser le produit complet
+  q v q* (le solide gonfle de |q|², c'est l'erreur à montrer) ; pour les diagnostics (E, L) normaliser d'abord. **Garder |q| = 1 ne suffit pas** : Lie-Heun l'assure et dérive en énergie et en L (mesuré) ; la structure symplectique
+  est ce qui conserve L. `ellipticK(sqrt(1 − m))` perd la précision pour m petit (nome faux de 0,5 % à m = 1e-14) : le nome se forme avec K = π / (2 AGM(1, k')) et K' = π / (2 AGM(1, k)) directement. Appeler `reference(t)` dans une
+  boucle sur t ré-intègre depuis 0 à chaque fois (coût QUADRATIQUE : un seul test a pris 76 s en Debug) : intégrer une fois et échantillonner (`walkReference` dans les tests). L'ODE de la rotation est lisse : les ordres sont propres
+  (×16,06 pour RK4, ×4,00 pour les schémas d'ordre 2), contrairement au contact de Hertz de M5c. Un test de l'« ordre » de Euler n'est asymptotique qu'à pas fin (avec le couple de la toupie, 50 pas donnent NaN). La solution de Jacobi exige
+  I1 < I2 < I3 et un départ (a, 0, c) avec a, c > 0 ; sans ω2(0) = 0 il faudrait l'intégrale elliptique incomplète de première espèce pour la phase (non écrite). Hypothèse fausse corrigée : une toupie sous le spin critique ne tombe
+  pas (grande nutation, elle remonte).
 - **Interface** : la police Segoe UI n'a pas ∇ ni ∝ (affichés « � ») ; ∂, ᵀ, ω, √, ≈, Δ passent. Plus de 3 colonnes numériques dans « Invariants » (~400 px)
   écrasent la colonne « Méthode » : scinder en deux tableaux. `TextDisabled` ne passe pas à la ligne : utiliser `TextWrapped` colorée pour les notes.
 - **PowerShell 5.1** : `Get-Content -Raw | Set-Content -Encoding utf8` ré-encode les accents (mojibake) et ajoute un BOM. Éditer avec l'outil Edit, ou avec
@@ -230,54 +260,56 @@ third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; gl
 - M5c : ℓ (U+2113) et ≪ (U+226A) remplacés par « L » et un texte par précaution (non testés) ; ¼, α, ≤, ≈, ², ½, −, →, ↔ passent. Un schéma qui diverge (Euler explicite à 10 pas par contact) met des
   valeurs infinies dans l'état : détecter (`diverged_`), arrêter, ne pas dessiner, ne pas échantillonner. Le ralenti du choc se décide par image (`slowMotion()`), pas par pas de temps.
   `tests/test_core.cpp` est en CRLF dans la copie de travail (un `replace` Python doit utiliser \r\n) ; `Application.cpp` a des fins de ligne mixtes : utiliser l'outil Edit ; les nouveaux fichiers sont en LF.
+- M6 : ⊥ (U+22A5) NE s'affiche PAS (« � ») ; Ω, ⁻, ² et ³ passent (vérifié sur captures) ; β, τ, ¹, ⁵, ⁶ utilisés dans les textes des niveaux 4 à 6 mais non vérifiés à l'écran. Les gros heredocs `python - <<'EOF'` avec des apostrophes échouent dans l'outil Bash (« unexpected EOF ») : écrire le script avec l'outil Write dans
+  le dossier temporaire puis `python -I script.py`. Ne PAS repasser `-G Ninja` sur un dossier `build` déjà configuré avec un autre générateur (erreur « Does not match the generator used previously ») : le dossier `build` de cette machine a été
+  reconfiguré en MinGW Makefiles / Debug par autre chose que moi (les tests y durent 4,2 s contre 1 s en Release) ; construire avec `cmake --build build` sans `-G`. Pour une vérification Release : dossier jetable dans le dossier temporaire de la session.
 
 ## 5. Vérifier avant de commiter
 
 ```bash
 cmake -S . -B build -G Ninja && cmake --build build           # aucun avertissement attendu (-Wall -Wextra -Wpedantic)
 ctest --test-dir build --output-on-failure                     # "test_core : OK"
-for s in 1 2 3 4 5 6 7 8 9; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
+for s in 1 2 3 4 5 6 7 8 9 10; do ./build/physicslab --smoke-test --sim $s --level 6; done   # démarrage hors écran, GL 4.5
 ```
 Build Debug propre depuis zéro de temps en temps (`-DCMAKE_BUILD_TYPE=Debug` dans un dossier jetable : vérifie les `assert`).
 Vérification visuelle (PowerShell) : `.\tools\screenshot.ps1 -Level 5 -Sim 4 -Wait 8` puis ouvrir le PNG indiqué. Regarder au moins les
 niveaux 1, 3, 5 et 6 d'un nouveau module, et un ancien module pour la non-régression. `-Clicks "x,y;x,y"` simule des clics.
 
-Options de l'application : `--level 1..6`, `--sim 1..9` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
-6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
+Options de l'application : `--level 1..6`, `--sim 1..10` (1 = M1, 2 = M2, 3 = M3 pendule simple, 4 = M3b pendule double, 5 = M4a Kepler,
+6 = M4b N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton, 10 = M6 corps rigide), `--smoke-test`. Navigation 3D : clic gauche tourner, clic droit/milieu déplacer, molette zoomer.
 
-## 6. Suite : M6 corps rigide (brouillon, à re-présenter brièvement au début de la prochaine conversation, puis commencer par l'étape 1 si l'utilisateur valide)
+## 6. Suite : M7 N-corps GPU (brouillon, à re-présenter brièvement au début de la prochaine conversation, puis commencer par l'étape 1 si l'utilisateur valide)
 
-Brouillon rédigé de mémoire, à valider par le calcul avant de l'écrire dans l'interface (règle : ne rien affirmer sans l'avoir mesuré).
+Brouillon rédigé de mémoire, à valider par le calcul et par des mesures (règle : ne rien affirmer sans l'avoir mesuré). Dernier module de la Mécanique.
 
-**Le problème.** Un solide indéformable de masse m, de tenseur d'inertie I (constant dans le repère du corps, diagonal I1, I2, I3 dans les axes principaux). État : position du
-centre de masse, orientation (quaternion unitaire q), impulsion, moment cinétique. Sans couple, dans le repère du corps : équations d'Euler I ω' = (I ω) × ω ; orientation
-q' = ½ q ⊗ (0, ω). Invariants : |q| = 1, le vecteur L (dans le repère fixe), l'énergie E = ½ ω·I ω.
+**Le problème.** Reprendre le calcul O(N²) de `nbody::accelerations` (M4b, CPU double) dans un compute shader OpenGL 4.5, en `float`, et mesurer l'écart au CPU : « le CPU vérifie le GPU ». Le contrat est l'interface existante
+(positions, masses, n, G, adoucissement, accélérations). L'adoucissement de Plummer est obligatoire (en `float` une rencontre rapprochée sature).
 
-**Références exactes.** (1) Solide symétrique libre (I1 = I2) : ω3 constante, (ω1, ω2) tourne à (I3 − I1) ω3 / I1 dans le repère du corps, l'axe du corps précesse autour de L à
-la vitesse L / I1. (2) Solide asymétrique libre : fonctions elliptiques de Jacobi (`ellipticK` existe dans Pendulum.hpp ; sn, cn, dn à écrire : le pendule n'utilise que le développement de Fourier de sn) ; instabilité de l'axe
-intermédiaire (raquette de tennis), taux de croissance λ = ω2 sqrt((I3 − I2)(I2 − I1) / (I1 I3)) pour I1 < I2 < I3. (3) Toupie pesante de Lagrange : trois intégrales premières
-(E, L_z, L_3), problème de nutation réduit à une quadrature en θ ; toupie « endormie » stable si I3² ω3² > 4 I1 m g l.
+**Algorithme.** Un thread par corps cible, boucle sur les sources par tuiles chargées en mémoire partagée (taille du groupe de travail), accumulation de a_i = G sum_j m_j (r_j − r_i) / (|r|² + eps²)^(3/2) ; intégration kick-drift-kick (Verlet)
+dans le shader sur des SSBO (double tampon des positions). Centrer les positions sur le barycentre pour limiter l'annulation dans r_j − r_i.
 
-**Difficultés numériques.**
-- L'état n'est pas plat : un quaternion vit sur la sphère S³ (le `Solver` actuel suppose y = [positions | vitesses] dans R^n). Un RK4 sur q fait dériver la norme ; options :
-  RK4 + renormalisation (ordre à mesurer), schémas de groupe de Lie (q ← q ⊗ exp(h ω / 2)), découpage symplectique (rotations exactes successives autour des axes principaux :
-  L conservé exactement, E borné). Mesurer la dérive de |q|, de L et de E pour chacun.
-- Euler explicite sur ω et q : dérive d'énergie à mesurer.
-- Choc d'un corps rigide (impulsion en un point, cône de Coulomb, paradoxe de Painlevé) : hors périmètre de M6 sauf bonus (suite naturelle de M5).
+**Difficultés (à mesurer, pas à affirmer).**
+- Précision `float` (mantisse 24 bits, 6e-8 relatif) : erreur d'accélération en fonction de N ; dérive d'énergie plus forte qu'en `double` ; ordre de sommation non déterministe d'un GPU à l'autre.
+- Le chaos limite la comparaison : après un temps de l'ordre de 1/λ (M4b : λ ≈ 0,8 pour l'amas de 6 corps, amplification ×6,6e4 sur 14 unités de temps) une trajectoire `float` et une trajectoire `double` n'ont plus rien de commun. Comparer
+  les ACCÉLÉRATIONS à état fixé (erreur relative corps par corps), puis des horizons courts et des grandeurs d'ensemble (E, P, L), pas des trajectoires longues.
+- Les forces par paire sont antisymétriques à l'arrondi près seulement : l'impulsion totale dérive (à mesurer, ~1e-7 relatif attendu par pas).
+- Les tests de `test_core` n'ont pas de contexte GL : prévoir une option `--gpu-test` de l'application (fenêtre cachée GL 4.5 comme `--smoke-test`) qui compare GPU et CPU et renvoie un code de sortie. Vérifier que le glad généré expose
+  `glDispatchCompute`, `glMemoryBarrier`, les SSBO et les requêtes de temps (GL 4.5 core devrait suffire : à contrôler).
+- Mesurer le temps avec `GL_TIME_ELAPSED` : N = 1e3 ... 1e5 (1e5² = 1e10 interactions par pas), débit en interactions par seconde contre le CPU `double`. Barnes-Hut hors périmètre.
 
-**Simulations (`--sim 10`).** Solide symétrique libre (précession, cône) ; solide asymétrique libre (parallélépipède : les trois axes, stabilité, polhodes au niveau 5) ; toupie de
-Lagrange et toupie endormie ; au niveau 6, comparaison des intégrateurs d'orientation (dérive de |q|, L, E).
+**Simulation (`--sim 11`).** Amas / galaxie de N réglable (de 100 à plusieurs dizaines de milliers : à mesurer), bascule CPU / GPU, panneau d'erreur (distribution des écarts d'accélération, dérive de E et P), temps par pas ; niveaux 1-6 (au niveau 1 :
+« l'ordinateur calcule toutes les paires de corps, la carte graphique les fait en parallèle »). Rendu : `Renderer::draw(Points)` avec renvoi des positions au CPU à chaque image au début ; un rendu direct depuis le SSBO demanderait de modifier le renderer.
 
-**Plan.** (1) Cœur et tests d'abord : tenseurs d'inertie (sphère, boîte, cylindre), équations d'Euler, solution exacte du solide symétrique, référence RK45 1e-13 pour l'asymétrique,
-invariants, intégrateurs d'orientation. (2) Interface. (3) Commit, push, passation.
+**Plan.** (1) Cœur et tests d'abord : enveloppe de programme de calcul et SSBO dans `render/` (a besoin d'un contexte GL : hors `physicslab_core`), shader `shaders/nbody.comp`, comparaison GPU/CPU à état fixé via `--gpu-test`. (2) Interface. (3) Commit, push, passation.
+**Fin de domaine Mécanique (après M7)** : devlog complet (`docs/devlog/`), prompt de reprise court, cours compilé en PDF ou Word pour non-initiés (`docs/cours/`), « roue des domaines » pour choisir le module suivant, merge de
+`module/mecanique` dans `main` et tag `mecanique-1`.
 
-**À réutiliser :** `Quaternion`, `Mat3` (core), `Solver` / RK45 avec `maxSteps`, `ellipticK` (Pendulum.hpp), `SolverSet`, `StepClock`, `drawResultTable` (≤ 3 colonnes numériques),
-`wrapped`, `CradleModule` comme exemple récent de module (deux modèles côte à côte, ralenti, détection de divergence). Avant M7 (GPU) : fin de domaine Mécanique à livrer
-après M7 (devlog, cours PDF, roue des domaines, merge dans `main`, tag `mecanique-1`).
+**À réutiliser :** `nbody::accelerations` / `NBodyProblem` (CPU de référence), `SolverSet`, `StepClock`, `drawResultTable`, `wrapped`, `CradleModule` et `RigidBodyModule` comme exemples récents de modules (modèles côte à côte, détection de divergence,
+fenêtre « Analyse »), `tools/screenshot.ps1`.
 
 ## 7. Dette technique et idées
 
-- `computeConvergence()` est dupliqué dans 9 modules (variantes : erreur à `tEnd` fixe ; pente ajustée là où l'erreur < 0,1 pour M4 ; tous les points pour M5a) :
+- `computeConvergence()` est dupliqué dans 10 modules (variantes : erreur à `tEnd` fixe ; pente ajustée là où l'erreur < 0,1 pour M4 ; tous les points pour M5a) :
   à factoriser (fonction générique prenant une fonction d'erreur).
 - M5a : tableau des modèles d'orbite/chocs sans sélecteur de solveur par modèle (les 5 solveurs partagent le modèle choisi) ; le plan est dessiné en fil de fer,
   une rampe pleine (triangles) donnerait une meilleure lecture. Frottement de roulement, frottement visqueux non linéaire (quadratique) : absents.
@@ -291,6 +323,10 @@ après M7 (devlog, cours PDF, roue des domaines, merge dans `main`, tag `mecaniq
   billes dessinées en fil de fer (cercles) ; un seul modèle d'amortissement (Hunt-Crossley) ; l'issue de référence de Hertz est calculée à chaque `reset()` (RK45 serré, quelques ms) ;
   l'étude de convergence du module recalcule 28 références à chaque changement de paramètre quand « Analyse » est visible ; le texte du niveau 6 cite Nesterenko (1983, onde solitaire de
   la chaîne de Hertz) de mémoire : non vérifié ici ; les textes des niveaux 2 à 4 n'ont pas été relus à l'écran. `tests/test_core.cpp` dépasse 2500 lignes : à scinder par domaine.
+- M6 : boîte de dimensions fixes (3 × 2 × 1) ; solution de Jacobi seulement pour un départ (a, 0, c) (pas de phase quelconque : intégrale elliptique incomplète à écrire) ; pas d'orientation exacte du solide asymétrique (fonctions thêta) ;
+  toupie à pivot fixe seulement (pas de toupie sur une table : contact, frottement, pointe qui glisse) ; pas de choc de corps rigides (cône de Coulomb, paradoxe de Painlevé) ; découpage d'ordre 2 seulement (pas de composition d'ordre 4 ni
+  de RKMK d'ordre 4, alors que RK4 + renormalisation est d'ordre 4 mais perd L) ; textes des niveaux 2 et 3 non relus à l'écran ; valeurs extrêmes des curseurs et chemin « précession régulière impossible » non déclenchés dans l'application ;
+  corps dessinés en fil de fer. `tests/test_core.cpp` : plus de 3100 lignes (à scinder par domaine).
 - Une fenêtre console s'ouvre à côté de l'application (à masquer en Release sous Windows).
 - Dans le tableau d'invariants du niveau 6, certains libellés sont abrégés (« Euler sympl. »).
 - Identité Git : `user.name` vaut `Noa-biy11` alors que le login GitHub est `Noa11-biy` (à corriger si l'utilisateur le souhaite).
@@ -300,5 +336,5 @@ après M7 (devlog, cours PDF, roue des domaines, merge dans `main`, tag `mecaniq
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges),
 > puis `README.md`. Vérifie que ça compile et que les tests passent (section 5), puis présente-moi la feuille de route courte du
-> module M6 (corps rigide : quaternions, solide libre, toupie ; M5 collisions et frottements est terminé ; la section 6 en donne le brouillon) avant de coder.
-> Réponses courtes pendant le module, en français.
+> module M7 (N-corps GPU en compute shader, écart CPU/GPU ; M6 corps rigide est terminé ; la section 6 en donne le brouillon) avant de coder.
+> Réponses courtes pendant le module, en français. Après M7 : livrables de fin de domaine Mécanique (devlog, cours, roue des domaines, merge, tag).
