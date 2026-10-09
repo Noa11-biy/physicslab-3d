@@ -23,6 +23,7 @@
 #include "physicslab/mechanics/Oscillator.hpp"
 #include "physicslab/mechanics/Pendulum.hpp"
 #include "physicslab/mechanics/Projectile.hpp"
+#include "physicslab/mechanics/RigidBody.hpp"
 
 namespace {
 
@@ -2417,6 +2418,707 @@ void testHertzDamping() {
     }
 }
 
+// ---- M6 : corps rigide ----
+
+// Moments d'inertie par intégration numérique directe (somme de Riemann au point milieu sur une grille) : contrôle indépendant des
+// formules fermées. `inside(x, y, z)` décrit le solide ; la densité est uniforme, de masse totale m.
+Vec3 gridInertia(double m, double halfX, double halfY, double halfZ, int n, bool (*inside)(double, double, double)) {
+    double volume = 0.0, ixx = 0.0, iyy = 0.0, izz = 0.0;
+    const double dx = 2.0 * halfX / n, dy = 2.0 * halfY / n, dz = 2.0 * halfZ / n, dv = dx * dy * dz;
+    for (int i = 0; i < n; ++i) {
+        const double x = -halfX + (i + 0.5) * dx;
+        for (int j = 0; j < n; ++j) {
+            const double y = -halfY + (j + 0.5) * dy;
+            for (int k = 0; k < n; ++k) {
+                const double z = -halfZ + (k + 0.5) * dz;
+                if (!inside(x, y, z)) continue;
+                volume += dv;
+                ixx += (y * y + z * z) * dv;
+                iyy += (x * x + z * z) * dv;
+                izz += (x * x + y * y) * dv;
+            }
+        }
+    }
+    const double rho = m / volume;   // masse volumique déduite du volume de la grille (même erreur de bord sur les deux)
+    return {rho * ixx, rho * iyy, rho * izz};
+}
+
+void testInertiaTensors() {
+    // Valeurs à la main.
+    const Vec3 s = inertia::sphere(2.0, 0.5);                   // 2/5 m r^2 = 0,2
+    CHECK_NEAR(s.x, 0.2, 1e-15);
+    CHECK_NEAR(s.y, 0.2, 1e-15);
+    CHECK_NEAR(s.z, 0.2, 1e-15);
+    const Vec3 b = inertia::box(3.0, 1.0, 2.0, 3.0);            // m/12 (b^2 + c^2), ... = 3,25 ; 2,5 ; 1,25
+    CHECK_NEAR(b.x, 3.25, 1e-15);
+    CHECK_NEAR(b.y, 2.5, 1e-15);
+    CHECK_NEAR(b.z, 1.25, 1e-15);
+    const Vec3 c = inertia::cylinder(2.0, 0.5, 2.0);            // axe z : 1/2 m r^2 = 0,25 ; m/12 (3 r^2 + h^2) = 0,79167
+    CHECK_NEAR(c.z, 0.25, 1e-15);
+    CHECK_NEAR(c.x, 2.0 / 12.0 * (0.75 + 4.0), 1e-15);
+    CHECK_NEAR(c.y, c.x, 0.0);
+
+    // Contrôle par intégration directe sur une grille (la sphère et le cylindre ont une erreur de bord de l'ordre de 1/n).
+    const Vec3 gs = gridInertia(2.0, 0.5, 0.5, 0.5, 100, [](double x, double y, double z) { return x * x + y * y + z * z <= 0.25; });
+    const Vec3 gb = gridInertia(3.0, 0.5, 1.0, 1.5, 60, [](double, double, double) { return true; });
+    const Vec3 gc = gridInertia(2.0, 0.5, 0.5, 1.0, 100, [](double x, double y, double) { return x * x + y * y <= 0.25; });
+    CHECK_NEAR(gs.x / s.x, 1.0, 5e-3);
+    CHECK_NEAR(gs.z / s.z, 1.0, 5e-3);
+    CHECK_NEAR(gb.x / b.x, 1.0, 1e-3);
+    CHECK_NEAR(gb.y / b.y, 1.0, 1e-3);
+    CHECK_NEAR(gb.z / b.z, 1.0, 1e-3);
+    CHECK_NEAR(gc.z / c.z, 1.0, 5e-3);
+    CHECK_NEAR(gc.x / c.x, 1.0, 5e-3);
+
+    // Un solide réel vérifie l'inégalité triangulaire I_i + I_j >= I_k (égalité pour une figure plane).
+    for (const Vec3& v : {s, b, c}) {
+        CHECK(v.x + v.y >= v.z - 1e-12 && v.y + v.z >= v.x - 1e-12 && v.x + v.z >= v.y - 1e-12);
+    }
+}
+
+// Équations d'Euler I w' = (I w) x w, orientation q' = 1/2 q (0, w).
+void testEulerEquations() {
+    FreeBodyProblem p;
+    p.inertia = {1.0, 2.0, 3.0};
+    // À la main : w = (1, 2, 3) -> w1' = (I2 - I3)/I1 w2 w3 = -6 ; w2' = (I3 - I1)/I2 w3 w1 = 3 ; w3' = (I1 - I2)/I3 w1 w2 = -2/3.
+    const Vec3 d = p.omegaDot({1.0, 2.0, 3.0});
+    CHECK_NEAR(d.x, -6.0, 1e-15);
+    CHECK_NEAR(d.y, 3.0, 1e-15);
+    CHECK_NEAR(d.z, -2.0 / 3.0, 1e-15);
+    // Rotation autour d'un axe principal : état stationnaire (aucun couple en repère du corps).
+    for (const Vec3& w : {Vec3{5.0, 0.0, 0.0}, Vec3{0.0, -2.0, 0.0}, Vec3{0.0, 0.0, 7.0}}) CHECK_NEAR(p.omegaDot(w).norm(), 0.0, 1e-15);
+    // Solide sphérique (I1 = I2 = I3) : jamais de précession, w constant quel que soit w.
+    p.inertia = {0.4, 0.4, 0.4};
+    CHECK_NEAR(p.omegaDot({1.0, -2.0, 3.0}).norm(), 0.0, 1e-15);
+
+    // Cinématique : q = identité, w = (0, 0, 2) -> q' = 1/2 (0, w) = (0, 0, 0, 1).
+    p.inertia = {1.0, 2.0, 3.0};
+    p.q0 = Quaternion{};
+    p.omega0 = {0.0, 0.0, 2.0};
+    State dy(7);
+    p.rhs()(0.0, p.initialState(), dy);
+    CHECK_NEAR(dy[0], 0.0, 1e-15);
+    CHECK_NEAR(dy[1], 0.0, 1e-15);
+    CHECK_NEAR(dy[2], 0.0, 1e-15);
+    CHECK_NEAR(dy[3], 1.0, 1e-15);
+    CHECK_NEAR(dy[6], 0.0, 1e-15);
+    // Aller-retour de l'état : (q, w) <-> vecteur de 7 nombres.
+    const RotationState rs = unpackRotation(p.initialState());
+    CHECK_NEAR(rs.q.w, 1.0, 0.0);
+    CHECK_NEAR(rs.omega.z, 2.0, 0.0);
+    CHECK((packRotation(rs) == p.initialState()));
+}
+
+// Invariants : énergie, moment cinétique (vecteur, dans le repère FIXE), norme du quaternion le long d'une trajectoire de référence.
+void testFreeBodyInvariants() {
+    FreeBodyProblem p;
+    p.inertia = {1.0, 2.0, 3.0};
+    p.q0 = Quaternion::fromAxisAngle({1.0, 2.0, 3.0}, 0.8);
+    p.omega0 = {0.7, 1.3, -0.4};
+    const RotationState s0{p.q0, p.omega0};
+
+    // E = 1/2 sum I_i w_i^2 et L_corps = I w, à la main.
+    CHECK_NEAR(p.energy(s0), 0.5 * (1.0 * 0.49 + 2.0 * 1.69 + 3.0 * 0.16), 1e-15);
+    const Vec3 lb = p.angularMomentumBody(s0);
+    CHECK_NEAR(lb.x, 0.7, 1e-15);
+    CHECK_NEAR(lb.y, 2.6, 1e-15);
+    CHECK_NEAR(lb.z, -1.2, 1e-15);
+    // Le moment cinétique dans le repère fixe est R L_corps : même norme.
+    const Vec3 ls = p.angularMomentumSpace(s0);
+    CHECK_NEAR(ls.norm(), lb.norm(), 1e-14);
+    const Vec3 manual = p.q0.toMat3() * lb;
+    CHECK_NEAR((ls - manual).norm(), 0.0, 1e-14);
+
+    // Le long de la trajectoire exacte (RK45 serré) : tout est conservé, y compris le VECTEUR L dans le repère fixe.
+    for (double t : {1.0, 5.0, 15.0, 40.0}) {
+        const RotationState s = p.reference(t);
+        CHECK_NEAR(p.energy(s), p.energy(s0), 1e-11);
+        CHECK_NEAR((p.angularMomentumSpace(s) - ls).norm(), 0.0, 1e-11);
+        CHECK_NEAR(s.q.norm(), 1.0, 1e-11);
+        // Le corps a bien tourné (le test ne doit pas passer sur un état figé).
+        CHECK((s.omega - p.omega0).norm() > 1e-3);
+    }
+}
+
+// Distance entre deux orientations : norme de Frobenius de la différence des matrices de rotation (insensible au signe q <-> -q).
+double orientationDistance(const Quaternion& a, const Quaternion& b) {
+    const Mat3 ra = a.toMat3(), rb = b.toMat3();
+    double sum = 0.0;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) sum += (ra.m[i][j] - rb.m[i][j]) * (ra.m[i][j] - rb.m[i][j]);
+    return std::sqrt(sum);
+}
+
+// Parcourt la trajectoire de référence (RK45 serré) en UNE seule intégration, en appelant visit(t, état) tous les dt : appeler reference(t)
+// à chaque instant ré-intègre depuis 0 chaque fois (coût quadratique : 76 s mesurés pour ce seul test en Debug).
+template <class Visit>
+void walkReference(const OdeFunction& f, State y, double dt, int count, Visit&& visit) {
+    RK45 rk;
+    rk.relTol = 1e-13;
+    rk.absTol = 1e-15;
+    for (int i = 1; i <= count; ++i) {
+        advance(rk, f, (i - 1) * dt, y, dt, 100000);
+        visit(i * dt, unpackRotation(y));
+    }
+}
+
+// Solide symétrique libre (I1 = I2) : w3 constante, (w1, w2) tourne à Omega = (I3 - I1) w3 / I1 dans le repère du corps, l'axe du corps
+// décrit un cône autour du vecteur fixe L à la vitesse L / I1. Formule fermée de l'orientation : q(t) = q_L(L t / I1) q0 q_3(-Omega t).
+void testSymmetricTopExact() {
+    struct Case { Vec3 inertia; Vec3 omega; };
+    const Case cases[] = {{{2.0, 2.0, 1.0}, {0.9, -0.4, 3.0}},     // allongé (I3 < I1) : le « cigare »
+                          {{1.0, 1.0, 2.0}, {0.5, 0.8, 4.0}},      // aplati (I3 > I1) : le disque
+                          {{1.5, 1.5, 1.5}, {1.0, -2.0, 0.7}}};    // sphérique : Omega = 0, rotation uniforme
+    for (const Case& c : cases) {
+        FreeBodyProblem p;
+        p.inertia = c.inertia;
+        p.q0 = Quaternion::fromAxisAngle({0.3, -1.0, 0.6}, 1.1);
+        p.omega0 = c.omega;
+        const RotationState s0{p.q0, p.omega0};
+        const double L = p.angularMomentumBody(s0).norm(), Omega = (c.inertia.z - c.inertia.x) * c.omega.z / c.inertia.x;
+        const Vec3 Ls = p.angularMomentumSpace(s0);
+
+        // t = 0 : on retrouve les conditions initiales.
+        const RotationState e0 = p.exactSymmetric(0.0);
+        CHECK_NEAR(orientationDistance(e0.q, p.q0), 0.0, 1e-14);
+        CHECK_NEAR((e0.omega - p.omega0).norm(), 0.0, 1e-15);
+
+        for (double t : {0.7, 3.0, 10.0, 25.0}) {
+            const RotationState e = p.exactSymmetric(t), r = p.reference(t);
+            CHECK_NEAR((e.omega - r.omega).norm(), 0.0, 1e-10);                       // w(t) = formule : accord avec l'intégration serrée (mesuré 2e-12)
+            CHECK_NEAR(orientationDistance(e.q, r.q), 0.0, 1e-10);                    // q(t) aussi : orientation entière (mesuré 4e-12)
+            CHECK_NEAR(e.q.norm(), 1.0, 1e-14);                                       // la formule fermée reste exactement unitaire
+            CHECK_NEAR(e.omega.z, c.omega.z, 1e-15);                                  // w3 constante
+            CHECK_NEAR(std::hypot(e.omega.x, e.omega.y), std::hypot(c.omega.x, c.omega.y), 1e-14);   // module de (w1, w2) constant
+            CHECK_NEAR((p.angularMomentumSpace(e) - Ls).norm(), 0.0, 1e-13);          // L fixe dans le repère fixe
+            CHECK_NEAR(p.energy(e), p.energy(s0), 1e-13);
+        }
+        // Le cône : l'angle entre l'axe 3 du corps (dans le repère fixe) et L est constant, cos(theta) = I3 w3 / L.
+        const Vec3 Lhat = Ls / L;
+        for (double t : {0.0, 2.0, 7.5}) {
+            const Vec3 axis3 = p.exactSymmetric(t).q.rotate({0.0, 0.0, 1.0});
+            CHECK_NEAR(dot(axis3, Lhat), c.inertia.z * c.omega.z / L, 1e-13);
+        }
+        // Précession à la vitesse L / I1 : après une période 2 pi I1 / L l'axe du corps est revenu dans sa direction initiale.
+        const double period = 2.0 * constants::pi * c.inertia.x / L;
+        const Vec3 a0 = p.q0.rotate({0.0, 0.0, 1.0}), a1 = p.exactSymmetric(period).q.rotate({0.0, 0.0, 1.0});
+        CHECK_NEAR((a1 - a0).norm(), 0.0, 1e-13);
+        (void)Omega;
+    }
+    // Rotation pure autour de l'axe de symétrie : L est parallèle à l'axe 3, le corps tourne simplement de w3 t autour de lui.
+    FreeBodyProblem spin;
+    spin.inertia = {2.0, 2.0, 1.0};
+    spin.q0 = Quaternion::fromAxisAngle({1.0, 1.0, 0.0}, 0.5);
+    spin.omega0 = {0.0, 0.0, 3.0};
+    const Quaternion expected = spin.q0 * Quaternion::fromAxisAngle({0.0, 0.0, 1.0}, 3.0 * 4.0);
+    CHECK_NEAR(orientationDistance(spin.exactSymmetric(4.0).q, expected), 0.0, 1e-13);
+}
+
+// Fonctions elliptiques de Jacobi sn, cn, dn (paramètre m = k^2) : les trois sont l'UNIQUE solution du système sn' = cn dn, cn' = -sn dn,
+// dn' = -m sn cn avec (sn, cn, dn)(0) = (0, 1, 1). On compare donc la série de Fourier à une intégration RK4 de ce système (aucun code commun).
+void testJacobiFunctions() {
+    for (double m : {1e-14, 0.01, 0.3, 0.5, 0.75, 0.95, 0.999}) {
+        // Intégration de référence jusqu'à u = 5,3 (plus d'une période pour m petit : 4K ~ 6,3).
+        State y{0.0, 1.0, 1.0};
+        const OdeFunction f = [m](double, const State& s, State& d) { d[0] = s[1] * s[2]; d[1] = -s[0] * s[2]; d[2] = -m * s[0] * s[1]; };
+        RK4 rk4;
+        double u = 0.0;
+        const double du = 1e-3;
+        for (int i = 0; i < 5300; ++i) {
+            if (i % 530 == 0 && i > 0) {
+                double sn, cn, dn;
+                jacobiSnCnDn(u, m, sn, cn, dn);
+                CHECK_NEAR(sn, y[0], 1e-10);
+                CHECK_NEAR(cn, y[1], 1e-10);
+                CHECK_NEAR(dn, y[2], 1e-10);
+                CHECK_NEAR(sn * sn + cn * cn, 1.0, 5e-14);         // identités algébriques (mesuré : 4e-15, et 1,4e-14 pour m = 1e-14 : préfacteur 1/k)
+                CHECK_NEAR(dn * dn + m * sn * sn, 1.0, 1e-14);
+            }
+            u += rk4.step(f, u, y, du);
+        }
+    }
+    // Valeurs particulières : sn(K) = 1, cn(K) = 0, dn(K) = sqrt(1 - m), sn(0) = 0, sn(-u) = -sn(u), période 4K.
+    const double m = 0.64, k = 0.8, kk = ellipticK(k);
+    double sn, cn, dn, sn2, cn2, dn2;
+    jacobiSnCnDn(kk, m, sn, cn, dn);
+    CHECK_NEAR(sn, 1.0, 1e-14);
+    CHECK_NEAR(cn, 0.0, 1e-14);
+    CHECK_NEAR(dn, std::sqrt(1.0 - m), 1e-14);
+    jacobiSnCnDn(0.0, m, sn, cn, dn);
+    CHECK_NEAR(sn, 0.0, 1e-15);
+    CHECK_NEAR(cn, 1.0, 1e-15);
+    CHECK_NEAR(dn, 1.0, 1e-15);
+    jacobiSnCnDn(0.9, m, sn, cn, dn);
+    jacobiSnCnDn(-0.9, m, sn2, cn2, dn2);
+    CHECK_NEAR(sn2, -sn, 1e-15);
+    CHECK_NEAR(cn2, cn, 1e-15);
+    jacobiSnCnDn(0.9 + 4.0 * kk, m, sn2, cn2, dn2);
+    CHECK_NEAR(sn2, sn, 1e-12);
+    CHECK_NEAR(cn2, cn, 1e-12);
+    // m = 0 : fonctions trigonométriques.
+    jacobiSnCnDn(1.3, 0.0, sn, cn, dn);
+    CHECK_NEAR(sn, std::sin(1.3), 1e-15);
+    CHECK_NEAR(cn, std::cos(1.3), 1e-15);
+    CHECK_NEAR(dn, 1.0, 1e-15);
+}
+
+// Solide asymétrique libre (I1 < I2 < I3), départ w = (a, 0, c) : w(t) en fonctions de Jacobi (voir RigidBody.hpp), comparé à l'intégration
+// serrée des équations d'Euler. Deux régimes séparés par la séparatrice 2 E I2 = L^2 (rotation autour de l'axe 3 ou de l'axe 1).
+void testAsymmetricExact() {
+    struct Case { Vec3 omega; double m; bool nearAxis3; };
+    const Case cases[] = {{{1.5, 0.0, 1.0}, 0.75, true},      // 2 E I2 = 10,5 < L^2 = 11,25 : w3 en dn, w1 en cn
+                          {{2.0, 0.0, 0.5}, 0.1875, false},   // 2 E I2 = 9,5 > L^2 = 6,25 : w1 en dn, w3 en cn
+                          {{1.5, 0.0, 0.8}, 0.853, false}};   // près de la séparatrice : 8,34 contre 8,01
+    for (const Case& c : cases) {
+        FreeBodyProblem p;
+        p.inertia = {1.0, 2.0, 3.0};
+        p.q0 = Quaternion{};
+        p.omega0 = c.omega;
+        const RotationState s0{p.q0, p.omega0};
+        CHECK_NEAR(p.asymmetricParameter(), c.m, 5e-4);        // paramètre m = k^2 (à la main : voir les commentaires)
+        const double period = p.asymmetricPeriod();
+        CHECK(period > 0.0);
+        for (double t : {0.0, 0.4, 2.0, 7.0, 20.0, 40.0}) {
+            const Vec3 w = p.exactAsymmetricOmega(t);
+            const RotationState r = p.reference(t);
+            CHECK_NEAR((w - r.omega).norm(), 0.0, 1e-11);                                               // mesuré : <= 6e-13
+            CHECK_NEAR(p.energy({p.q0, w}), p.energy(s0), 1e-13);                                       // E et |L| sont des invariants de la formule
+            CHECK_NEAR(p.angularMomentumBody({p.q0, w}).norm(), p.angularMomentumBody(s0).norm(), 1e-13);
+        }
+        // Période de w(t) : 4 K(k) / lambda. Contrôle par l'intégration serrée, qui ne connaît pas la formule.
+        for (double t : {0.0, 1.3, 5.0}) {
+            const Vec3 a = p.reference(t).omega, b = p.reference(t + period).omega;
+            CHECK_NEAR((a - b).norm(), 0.0, 1e-11);                                                     // mesuré : <= 1e-13
+        }
+        // Pas de période plus courte : à une demi-période w1 ou w3 a changé de signe (cn) : la vitesse n'est pas revenue.
+        CHECK((p.reference(0.5 * period).omega - p.omega0).norm() > 0.5);
+    }
+}
+
+// Instabilité de l'axe intermédiaire (la « raquette de tennis ») : autour de l'axe 2, une petite perturbation (w1, w3) croît comme
+// exp(lambda t), avec lambda = w2 sqrt((I3 - I2)(I2 - I1) / (I1 I3)). Les axes extrêmes sont stables (simple oscillation).
+void testIntermediateAxisInstability() {
+    FreeBodyProblem p;
+    p.inertia = {1.0, 2.0, 3.0};
+    p.q0 = Quaternion{};
+    const double lambda = std::sqrt((3.0 - 2.0) * (2.0 - 1.0) / (1.0 * 3.0)) * 1.0;           // w2 = 1
+    p.omega0 = {0.0, 0.0, 0.0};
+    CHECK_NEAR(p.intermediateAxisGrowthRate(), 0.0, 1e-15);                                     // w2 = 0 : pas de rotation, pas de croissance
+    p.omega0 = {1e-9, 1.0, 1e-9};
+    CHECK_NEAR(p.intermediateAxisGrowthRate(), lambda, 1e-15);
+
+    // Pente de ln|w1| entre t = 8 et 14 (amplitude de 1e-9 e^(0,58 t) < 3e-6 : toujours linéaire), loin du mode décroissant.
+    const double w1a = std::abs(p.reference(8.0).omega.x), w1b = std::abs(p.reference(14.0).omega.x);
+    const double measured = std::log(w1b / w1a) / 6.0;
+    CHECK_NEAR(measured, lambda, 5e-4);                         // mesuré : 0,577411 pour 0,577350 prévu (écart relatif 1e-4)
+    CHECK(w1b > 100.0 * 1e-9);                                  // la perturbation a grossi d'au moins deux ordres de grandeur
+
+    // Axes extrêmes : une perturbation de 1e-3 reste de l'ordre de 1e-3 pendant toute la durée (stable).
+    for (const Vec3& spin : {Vec3{1.0, 1e-3, 1e-3}, Vec3{1e-3, 1e-3, 1.0}}) {
+        FreeBodyProblem q = p;
+        q.omega0 = spin;
+        double worst = 0.0;
+        walkReference(q.rhs(), q.initialState(), 0.5, 200, [&](double, const RotationState& r) {
+            const Vec3& w = r.omega;
+            worst = std::max(worst, (spin.x > 0.5) ? std::hypot(w.y, w.z) : std::hypot(w.x, w.y));
+        });
+        CHECK(worst < 5e-3);
+    }
+}
+
+// Intégrateurs d'orientation : cas où la réponse est connue à l'avance.
+void testRotationIntegratorBasics() {
+    // Distance entre deux états : insensible au signe de q (q et -q sont la même rotation), et la partie vitesse compte.
+    const RotationState a{Quaternion::fromAxisAngle({1, 2, 3}, 0.7), {0.1, 0.2, 0.3}};
+    CHECK_NEAR(rotationDistance(a, a), 0.0, 0.0);
+    CHECK_NEAR(rotationDistance(a, {Quaternion{-a.q.w, -a.q.x, -a.q.y, -a.q.z}, a.omega}), 0.0, 1e-15);
+    CHECK_NEAR(rotationDistance(a, {a.q, {0.1, 0.5, 0.3}}), 0.3, 1e-15);
+
+    // Rotation pure autour d'un axe principal : w constante, q(t) = q0 q_axe(w t). Réponse exacte pour tout pas.
+    const Vec3 inertia{1.0, 2.0, 3.0};
+    const RotationState s0{Quaternion::fromAxisAngle({1, 2, 3}, 0.7), {0.0, 2.0, 0.0}};
+    const Quaternion exact = s0.q * Quaternion::fromAxisAngle({0.0, 1.0, 0.0}, 2.0 * 1.0);   // t = 1
+    LieHeunRotation lie;
+    SplittingRotation splitting;
+    for (int steps : {1, 4, 50}) {                       // même avec UN SEUL pas de 1 s : l'exponentielle est exacte pour w constante
+        const RotationState l = integrateRotation(lie, inertia, {}, s0, 1.0, steps);
+        const RotationState d = integrateRotation(splitting, inertia, {}, s0, 1.0, steps);
+        CHECK_NEAR(orientationDistance(l.q, exact), 0.0, 1e-14);
+        CHECK_NEAR(orientationDistance(d.q, exact), 0.0, 1e-14);
+        CHECK_NEAR(l.q.norm(), 1.0, 1e-15);
+        CHECK_NEAR(d.q.norm(), 1.0, 1e-15);
+        CHECK_NEAR(l.omega.y, 2.0, 1e-15);
+        CHECK_NEAR(d.omega.y, 2.0, 1e-15);
+    }
+    RK4Rotation rk4;
+    const RotationState r = integrateRotation(rk4, inertia, {}, s0, 1.0, 100);
+    CHECK_NEAR(orientationDistance(r.q, exact), 0.0, 1e-9);             // ordre 4 : (h w)^5 / 120 par pas, très petit pour h w = 0,02
+    CHECK_NEAR(r.q.norm(), 1.0, 1e-15);                                 // avec renormalisation
+
+    // Euler explicite : chaque pas multiplie la norme de q par sqrt(1 + (h w)^2 / 4) EXACTEMENT (l'incrément q (0, w) est orthogonal à q),
+    // donc |q| = (1 + h^2 w^2 / 4)^(N/2) : la contrainte |q| = 1 n'est pas respectée toute seule.
+    EulerRotation euler;
+    const double h = 0.01;
+    const RotationState e = integrateRotation(euler, inertia, {}, s0, 1.0, 100);
+    CHECK_NEAR(e.q.norm(), std::pow(1.0 + h * h * 2.0 * 2.0 / 4.0, 50.0), 1e-12);
+    CHECK(e.q.norm() > 1.004);
+    CHECK_NEAR(e.omega.y, 2.0, 1e-15);
+
+    // RK4 sans renormalisation : la dérive de la norme est d'ordre élevé mais non nulle (elle s'accumule d'un pas à l'autre).
+    RK4Rotation raw(false);
+    const RotationState u = integrateRotation(raw, inertia, {}, s0, 1.0, 100);
+    CHECK(std::abs(u.q.norm() - 1.0) < 1e-10);
+}
+
+// Découpage symplectique (Dullweber-Leimkuhler-McLachlan) : chaque sous-pas est une rotation EXACTE autour d'un axe principal, donc
+// |q| = 1 et le vecteur L dans le repère fixe sont conservés à l'arrondi près, quel que soit le pas ; l'énergie reste bornée.
+void testSplittingConservation() {
+    const Vec3 inertia{1.0, 2.0, 3.0};
+    const RotationState s0{Quaternion::fromAxisAngle({0.3, -1.0, 0.6}, 1.1), {0.1, 2.0, 0.1}};   // près de l'axe instable : mouvement violent
+    FreeBodyProblem p;
+    p.inertia = inertia;
+    const Vec3 l0 = p.angularMomentumSpace(s0);
+    const double e0 = p.energy(s0);
+
+    SplittingRotation splitting;
+    RotationState s = s0;
+    double worstL = 0.0, worstQ = 0.0, worstE = 0.0;
+    const double h = 0.1;                                   // h |w| = 0,2 : pas grossier
+    for (int i = 0; i < 5000; ++i) {                        // 500 s
+        splitting.step(inertia, {}, s, h);
+        worstL = std::max(worstL, (p.angularMomentumSpace(s) - l0).norm());
+        worstQ = std::max(worstQ, std::abs(s.q.norm() - 1.0));
+        worstE = std::max(worstE, std::abs(p.energy(s) - e0) / e0);
+    }
+    CHECK(worstL < 1e-12);
+    CHECK(worstQ < 1e-13);
+    CHECK(worstE < 3.5e-4);                                 // mesuré : 2,74e-4 (borne de l'erreur d'énergie en h^2, sans dérive séculaire)
+
+    // L'erreur d'énergie est en h^2 et ne dérive pas : même maximum sur chaque tiers du calcul (mouvement périodique).
+    auto energyBound = [&](double step, int steps) {
+        RotationState t = s0;
+        double worst = 0.0;
+        for (int i = 0; i < steps; ++i) {
+            splitting.step(inertia, {}, t, step);
+            worst = std::max(worst, std::abs(p.energy(t) - e0) / e0);
+        }
+        return worst;
+    };
+    const double fine = energyBound(0.05, 10000), coarse = energyBound(0.1, 5000);
+    CHECK(coarse / fine > 3.7 && coarse / fine < 4.3);       // mesuré : 3,98
+    const double lastThird = [&] {
+        RotationState t = s0;
+        double worst = 0.0;
+        for (int i = 0; i < 5000; ++i) {
+            splitting.step(inertia, {}, t, 0.1);
+            if (i >= 3334) worst = std::max(worst, std::abs(p.energy(t) - e0) / e0);
+        }
+        return worst;
+    }();
+    CHECK(lastThird > 0.98 * coarse);                        // le dernier tiers atteint déjà le maximum : aucune dérive
+}
+
+// Mesures de convergence et de dérive sur une trajectoire de solide asymétrique (corps proche de l'axe intermédiaire : mouvement violent).
+struct DriftStats {
+    double maxEnergy = 0.0, maxNorm = 0.0, maxMomentum = 0.0, finalEnergy = 0.0;
+    int divergedAt = -1;   // pas où l'état explose (|w| > 1e6 ou non fini), -1 sinon
+};
+
+DriftStats rotationDrift(RotationIntegrator& integrator, double h, int steps) {
+    FreeBodyProblem p;
+    p.inertia = {1.0, 2.0, 3.0};
+    const RotationState s0{Quaternion::fromAxisAngle({0.3, -1.0, 0.6}, 1.1), {0.1, 2.0, 0.1}};
+    const Vec3 l0 = p.angularMomentumSpace(s0);
+    const double e0 = p.energy(s0);
+    RotationState s = s0;
+    DriftStats stats;
+    for (int i = 0; i < steps; ++i) {
+        integrator.step(p.inertia, {}, s, h);
+        if (!std::isfinite(s.q.w) || !std::isfinite(s.omega.x) || s.omega.norm() > 1e6) {
+            stats.divergedAt = i;
+            break;
+        }
+        stats.finalEnergy = (p.energy(s) - e0) / e0;
+        stats.maxEnergy = std::max(stats.maxEnergy, std::abs(stats.finalEnergy));
+        stats.maxNorm = std::max(stats.maxNorm, std::abs(s.q.norm() - 1.0));
+        stats.maxMomentum = std::max(stats.maxMomentum, (p.angularMomentumSpace(s) - l0).norm() / l0.norm());
+    }
+    return stats;
+}
+
+// Ordres de convergence mesurés (erreur à t = 6,3 contre RK45 serré) : le rapport pour des pas divisés par 4 vaut 4^ordre.
+void testRotationOrders() {
+    FreeBodyProblem p;
+    p.inertia = {1.0, 2.0, 3.0};
+    p.q0 = Quaternion::fromAxisAngle({0.3, -1.0, 0.6}, 1.1);
+    p.omega0 = {0.9, 0.5, 1.1};
+    const RotationState s0{p.q0, p.omega0};
+    const double tEnd = 6.3;
+    const RotationState ref = p.reference(tEnd);
+    auto error = [&](RotationIntegrator& in, int n) { return rotationDistance(integrateRotation(in, p.inertia, {}, s0, tEnd, n), ref); };
+
+    EulerRotation euler;
+    RK4Rotation rk4;
+    LieHeunRotation lie;
+    SplittingRotation splitting;
+    // De 100 à 400 pas : Euler ordre 1 (4,29 mesuré), RK4 ordre 4 (263 mesuré, 256 théorique), Heun et découpage ordre 2 (15,8 et 15,9).
+    const double eulerRatio = error(euler, 100) / error(euler, 400);
+    CHECK(eulerRatio > 4.0 && eulerRatio < 4.6);
+    const double rk4Ratio = error(rk4, 100) / error(rk4, 400);
+    CHECK(rk4Ratio > 240.0 && rk4Ratio < 290.0);
+    const double lieRatio = error(lie, 100) / error(lie, 400);
+    CHECK(lieRatio > 15.0 && lieRatio < 16.6);
+    const double splitRatio = error(splitting, 100) / error(splitting, 400);
+    CHECK(splitRatio > 15.0 && splitRatio < 16.6);
+    // À pas égal le découpage est environ 3 fois plus précis que Heun (constante d'erreur plus faible) ; RK4 les écrase tous deux aux pas fins.
+    CHECK(error(splitting, 100) < 0.5 * error(lie, 100));
+    CHECK(error(rk4, 400) < 1e-3 * error(splitting, 400));
+    CHECK(error(rk4, 1600) < 1e-10);                          // mesuré : 3,5e-11
+}
+
+// Dérives sur 1000 s (20000 pas de 0,05) : ce que la renormalisation corrige et ce qu'elle ne corrige pas.
+void testRotationDrift() {
+    EulerRotation euler;
+    RK4Rotation rk4, raw(false);
+    LieHeunRotation lie;
+    SplittingRotation splitting;
+
+    const DriftStats d = rotationDrift(splitting, 0.05, 20000);
+    CHECK(d.divergedAt < 0);
+    CHECK(d.maxMomentum < 1e-12);                             // mesuré : 6e-14 : L conservé à l'arrondi près
+    CHECK(d.maxNorm < 1e-14);                                 // mesuré : 3e-16
+    CHECK(d.maxEnergy < 1e-4);                                // mesuré : 6,9e-5, borné
+    CHECK(std::abs(d.finalEnergy) < 1e-4);
+
+    const DriftStats r = rotationDrift(rk4, 0.05, 20000);
+    CHECK(r.divergedAt < 0);
+    CHECK(r.maxNorm < 1e-15);                                 // la renormalisation tient |q| = 1
+    CHECK(r.finalEnergy < -1e-6 && r.finalEnergy > -1e-5);    // mesuré : -3,1e-6 : RK4 perd lentement de l'énergie
+    CHECK(r.maxMomentum > 1e-7 && r.maxMomentum < 1e-5);      // mesuré : 1,8e-6 : L dérive (la renormalisation ne rétablit pas L)
+    CHECK(d.maxMomentum < 1e-6 * r.maxMomentum);              // le découpage conserve L au moins un million de fois mieux
+
+    const DriftStats u = rotationDrift(raw, 0.05, 20000);
+    CHECK(u.maxNorm > 1e-7 && u.maxNorm < 1e-4);              // mesuré : 4e-6 : la norme dérive sans renormalisation
+    CHECK(u.maxMomentum > r.maxMomentum);                     // et L aussi, d'un ordre de grandeur de plus (1,7e-5 contre 1,8e-6)
+
+    const DriftStats l = rotationDrift(lie, 0.05, 20000);
+    CHECK(l.divergedAt < 0);
+    CHECK(l.maxNorm < 1e-14);                                 // le groupe de Lie tient |q| = 1 ...
+    CHECK(l.maxEnergy > 1e-3 && l.maxEnergy < 0.1);           // ... mais PAS l'énergie : mesuré 1,4e-2 (dérive séculaire) ...
+    CHECK(l.maxMomentum > 1e-3);                              // ... ni L : mesuré 7e-3. Garder |q| = 1 ne suffit pas.
+    CHECK(rotationDrift(lie, 0.2, 5000).divergedAt > 0);      // à pas 0,2 : diverge (mesuré au pas 2691)
+
+    CHECK(rotationDrift(euler, 0.05, 20000).divergedAt > 0 && rotationDrift(euler, 0.05, 20000).divergedAt < 5000);   // mesuré : 2251
+}
+
+// ---- M6 : toupie pesante de Lagrange (corps symétrique I1 = I2, point fixe, pesanteur) ----
+
+HeavyTopProblem makeTop() {
+    HeavyTopProblem t;
+    t.mass = 1.0;
+    t.inertia = {1.2, 1.2, 0.4};   // moments autour du PIVOT
+    t.lever = 0.5;                 // pivot -> centre de masse
+    return t;
+}
+
+// Intégrales premières : l'énergie E = 1/2 w.Iw + m g l cos(theta), le moment cinétique VERTICAL L_z (la pesanteur n'a pas de couple autour de
+// la verticale) et le moment cinétique AXIAL L_3 = I3 w3 (le couple m g l e3 x (...) est perpendiculaire à e3).
+void testHeavyTopInvariants() {
+    HeavyTopProblem top = makeTop();
+    top.q0 = Quaternion::fromAxisAngle({1.0, 0.0, 0.0}, 0.7);
+    top.omega0 = {0.8, 1.5, 9.0};
+    const RotationState s0{top.q0, top.omega0};
+    CHECK_NEAR(top.cosTheta(top.q0), std::cos(0.7), 1e-15);
+    // E initiale à la main : 1/2 (1,2 (0,64 + 2,25) + 0,4 * 81) + 1 * g * 0,5 * cos 0,7.
+    CHECK_NEAR(top.energy(s0), 0.5 * (1.2 * (0.64 + 2.25) + 0.4 * 81.0) + 0.5 * constants::g0 * std::cos(0.7), 1e-12);
+    // Couple à la main : theta = 0 (axe vertical) : aucun couple ; theta = 90 degrés : m g l.
+    CHECK_NEAR(top.torque()(Quaternion{}).norm(), 0.0, 1e-15);
+    const Vec3 horizontal = top.torque()(Quaternion::fromAxisAngle({1.0, 0.0, 0.0}, 0.5 * constants::pi));
+    CHECK_NEAR(horizontal.norm(), top.mass * constants::g0 * top.lever, 1e-12);
+    CHECK_NEAR(horizontal.z, 0.0, 1e-12);                       // le couple est perpendiculaire à l'axe du corps
+
+    for (double t : {0.5, 2.0, 7.0, 15.0}) {
+        const RotationState s = top.reference(t);
+        CHECK_NEAR(top.energy(s), top.energy(s0), 1e-10);
+        CHECK_NEAR(top.verticalMomentum(s), top.verticalMomentum(s0), 1e-10);
+        CHECK_NEAR(top.axialMomentum(s), top.axialMomentum(s0), 1e-10);
+        CHECK_NEAR(s.q.norm(), 1.0, 1e-10);
+    }
+    // La toupie bouge vraiment (nutation) : l'inclinaison n'est pas constante.
+    double lo = 1.0, hi = -1.0;
+    for (int i = 0; i <= 60; ++i) {
+        const double u = top.cosTheta(top.reference(0.05 * i).q);
+        lo = std::min(lo, u);
+        hi = std::max(hi, u);
+    }
+    CHECK(hi - lo > 1e-3);
+}
+
+// Précession régulière : theta constant, phi' = [I3 w3 -/+ sqrt(I3^2 w3^2 - 4 I1 m g l cos(theta))] / (2 I1 cos(theta)) (branche lente / rapide),
+// d'où une solution exacte q(t) = q_z(phi' t) q_x(theta) q_z(psi' t) avec psi' = w3 - phi' cos(theta).
+void testHeavyTopSteadyPrecession() {
+    HeavyTopProblem top = makeTop();
+    for (double theta : {0.6, 1.2}) {
+        for (bool slow : {true, false}) {
+            const SteadyPrecession sp = top.steadyPrecession(theta, 25.0, slow);
+            CHECK(sp.valid);
+            // Équation de l'équilibre de theta : I1 phi'^2 cos(theta) - I3 w3 phi' + m g l = 0.
+            const double cosT = std::cos(theta);
+            CHECK_NEAR(top.inertia.x * sp.phiDot * sp.phiDot * cosT - top.inertia.z * 25.0 * sp.phiDot + top.mass * constants::g0 * top.lever, 0.0, 1e-9);
+            CHECK(slow ? sp.phiDot < 2.0 : sp.phiDot > 8.0);   // lente : environ m g l / (I3 w3) = 0,49 ; rapide : environ I3 w3 / (I1 cos) = 8,3 / cos
+            top.startSteady(sp);
+
+            for (double t : {0.0, 0.3, 2.0, 9.0}) {
+                const RotationState e = top.exactSteady(sp, t), r = top.reference(t);
+                CHECK_NEAR(orientationDistance(e.q, r.q), 0.0, 1e-8);
+                CHECK_NEAR((e.omega - r.omega).norm(), 0.0, 1e-8);
+                CHECK_NEAR(top.cosTheta(r.q), cosT, 1e-8);      // l'inclinaison ne bouge pas (pas de nutation)
+            }
+        }
+    }
+    // Axe horizontal (cos theta = 0) : une seule précession, phi' = m g l / (I3 w3), sans branche rapide finie.
+    const SteadyPrecession flat = top.steadyPrecession(0.5 * constants::pi, 25.0, true);
+    CHECK(flat.valid);
+    CHECK_NEAR(flat.phiDot, top.mass * constants::g0 * top.lever / (top.inertia.z * 25.0), 1e-12);
+    // Pas de précession régulière si le discriminant est négatif : spin trop faible à theta donné (la toupie tombe).
+    CHECK(!top.steadyPrecession(0.3, 2.0, true).valid);
+}
+
+// Nutation de la toupie : u = cos(theta) oscille entre deux racines u1 < u2 du polynôme cubique f(u) = u'^2 (Landau-Lifchitz, § 35) :
+//   f(u) = (2/I1)(E' - m g l u)(1 - u^2) - (L_z - L_3 u)^2 / I1^2,   E' = E - L_3^2 / (2 I3),
+// de racine supérieure u3 > 1. La période de nutation vaut T = 4 K(k) / sqrt(beta (u3 - u1)), beta = 2 m g l / I1, k^2 = (u2 - u1) / (u3 - u1).
+void testNutationPeriod() {
+    HeavyTopProblem top = makeTop();
+    top.q0 = Quaternion::fromAxisAngle({1.0, 0.0, 0.0}, 0.9);
+    top.omega0 = {0.0, 2.0, 20.0};                               // theta' = 0 au départ : on part d'un point de rebroussement
+    const NutationRange n = top.nutation();
+    CHECK(n.valid);
+    CHECK(n.u1 < n.u2 && n.u2 < 1.0 && n.u3 > 1.0);
+    const double u0 = top.cosTheta(top.q0);
+    CHECK(std::abs(u0 - n.u1) < 1e-10 || std::abs(u0 - n.u2) < 1e-10);   // le départ (theta' = 0) est une des deux racines
+
+    const double period = top.nutationPeriod();
+    CHECK(period > 0.05 && period < 5.0);
+    // À une demi-période l'autre point de rebroussement, à une période retour au départ.
+    const double other = std::abs(u0 - n.u1) < 1e-10 ? n.u2 : n.u1;
+    CHECK_NEAR(top.cosTheta(top.reference(0.5 * period).q), other, 1e-11);      // mesuré : 2e-14 (T = 1,069185)
+    CHECK_NEAR(top.cosTheta(top.reference(period).q), u0, 1e-11);
+    CHECK_NEAR(top.cosTheta(top.reference(3.0 * period).q), u0, 1e-10);
+    // Ni plus tôt : au tiers de période la toupie est ailleurs.
+    CHECK(std::abs(top.cosTheta(top.reference(period / 3.0).q) - u0) > 1e-3);
+    // Entre les deux, u reste dans [u1, u2].
+    for (double f : {0.1, 0.27, 0.5, 0.71, 0.93}) {
+        const double u = top.cosTheta(top.reference(f * period).q);
+        CHECK(u >= n.u1 - 1e-9 && u <= n.u2 + 1e-9);
+    }
+}
+
+// Toupie endormie (theta = 0) : stable si I3^2 w3^2 > 4 I1 m g l. En dessous, une petite inclinaison croît comme exp(gamma t),
+// gamma = sqrt(4 I1 m g l - I3^2 w3^2) / (2 I1) (de I1 zeta'' + i I3 w3 zeta' - m g l zeta = 0, zeta = theta e^(i phi), linéarisée).
+void testSleepingTop() {
+    HeavyTopProblem top = makeTop();
+    const double critical = top.sleepingCriticalSpin();
+    CHECK_NEAR(critical, 2.0 * std::sqrt(top.inertia.x * top.mass * constants::g0 * top.lever) / top.inertia.z, 1e-12);
+    CHECK(critical > 11.0 && critical < 13.0);
+
+    // Au-dessus du seuil : une inclinaison de 0,01 rad reste petite (oscillation bornée).
+    const double bounds[] = {0.025, 0.015, 0.012};              // mesuré : 0,0203 ; 0,0134 ; 0,0106 (plus le spin est grand, moins la toupie s'écarte)
+    int index = 0;
+    for (double factor : {1.15, 1.5, 3.0}) {
+        top.q0 = Quaternion::fromAxisAngle({1.0, 0.0, 0.0}, 0.01);
+        top.omega0 = {0.0, 0.0, factor * critical};
+        double worst = 0.0;
+        walkReference(top.rhs(), top.initialState(), 0.05, 400, [&](double, const RotationState& s) { worst = std::max(worst, std::acos(std::min(1.0, top.cosTheta(s.q)))); });
+        CHECK(worst < bounds[index++]);
+    }
+    // En dessous : croissance exponentielle au taux gamma (mesuré par la pente de ln theta), puis chute.
+    const double spin = 0.7 * critical;
+    const double gamma = std::sqrt(4.0 * top.inertia.x * top.mass * constants::g0 * top.lever - top.inertia.z * top.inertia.z * spin * spin) / (2.0 * top.inertia.x);
+    top.q0 = Quaternion::fromAxisAngle({1.0, 0.0, 0.0}, 1e-6);
+    top.omega0 = {0.0, 0.0, spin};
+    const double a = std::acos(top.cosTheta(top.reference(3.0).q)), b = std::acos(top.cosTheta(top.reference(5.0).q));
+    CHECK_NEAR(std::log(b / a) / 2.0, gamma, 1e-3 * gamma);      // mesuré : 1,44357 pour 1,44358 prévu
+    // Puis la grande nutation : la toupie s'incline jusqu'à environ 1,25 rad (mesuré) mais, fixée au pivot et sans perte, elle REMONTE vers la
+    // verticale (theta(20 s) ~ 1e-5) : elle ne « tombe » pas, l'énergie est conservée.
+    double maxTheta = 0.0, thetaAtEnd = 0.0;
+    walkReference(top.rhs(), top.initialState(), 0.5, 40, [&](double, const RotationState& s) {
+        thetaAtEnd = std::acos(std::min(1.0, top.cosTheta(s.q)));
+        maxTheta = std::max(maxTheta, thetaAtEnd);
+    });
+    CHECK(maxTheta > 1.0 && maxTheta < 1.6);
+    CHECK(thetaAtEnd < 0.01);
+}
+
+// Les intégrateurs avec un couple (la toupie) : mêmes ordres que sans couple, et le découpage symplectique garde le moment vertical L_z à
+// l'arrondi près (le couple de la pesanteur n'a pas de composante verticale : les « coups » ne le changent pas).
+void testRotationIntegratorsWithTorque() {
+    HeavyTopProblem top = makeTop();
+    top.q0 = Quaternion::fromAxisAngle({1.0, 0.0, 0.0}, 0.9);
+    top.omega0 = {0.0, 2.0, 20.0};
+    const RotationState s0{top.q0, top.omega0};
+    const TorqueFunction torque = top.torque();
+    const double tEnd = 2.0;                                    // près de deux périodes de nutation (1,069)
+    const RotationState ref = top.reference(tEnd);
+    auto error = [&](RotationIntegrator& in, int n) { return rotationDistance(integrateRotation(in, top.inertia, torque, s0, tEnd, n), ref); };
+
+    RK4Rotation rk4;
+    LieHeunRotation lie;
+    SplittingRotation splitting;
+    // De 200 à 800 pas (pré-asymptotique en dessous) : ordre 4 pour RK4 (263 mesuré), ordre 2 pour Heun (16,3) et le découpage (16,0).
+    const double rk4Ratio = error(rk4, 200) / error(rk4, 800);
+    CHECK(rk4Ratio > 245.0 && rk4Ratio < 285.0);
+    const double lieRatio = error(lie, 200) / error(lie, 800);
+    CHECK(lieRatio > 15.0 && lieRatio < 17.5);
+    const double splitRatio = error(splitting, 200) / error(splitting, 800);
+    CHECK(splitRatio > 15.0 && splitRatio < 16.8);
+    CHECK(error(rk4, 800) < 5e-3 * error(splitting, 800));      // RK4 est nettement le plus précis sur un horizon court (mesuré : rapport 1,3e-3)
+
+    // Euler explicite explose dès 50 pas (h w3 = 0,8) ; les autres restent finis.
+    EulerRotation euler;
+    const RotationState bad = integrateRotation(euler, top.inertia, torque, s0, tEnd, 50);
+    CHECK(!std::isfinite(bad.q.w) || bad.omega.norm() > 1e3);
+
+    // 100 s de nutation à h = 0,005 : L_z (et E) selon le schéma.
+    const double lz0 = top.verticalMomentum(s0), e0 = top.energy(s0);
+    auto drift = [&](RotationIntegrator& in, double& maxLz, double& maxE, double& maxQ) {
+        RotationState s = s0;
+        maxLz = maxE = maxQ = 0.0;
+        for (int i = 0; i < 20000; ++i) {
+            in.step(top.inertia, torque, s, 0.005);
+            maxLz = std::max(maxLz, std::abs(top.verticalMomentum(s) - lz0) / std::abs(lz0));
+            maxE = std::max(maxE, std::abs(top.energy(s) - e0) / std::abs(e0));
+            maxQ = std::max(maxQ, std::abs(s.q.norm() - 1.0));
+        }
+    };
+    double lzSplit, eSplit, qSplit, lzRk4, eRk4, qRk4, lzLie, eLie, qLie;
+    drift(splitting, lzSplit, eSplit, qSplit);
+    drift(rk4, lzRk4, eRk4, qRk4);
+    drift(lie, lzLie, eLie, qLie);
+    CHECK(lzSplit < 1e-11);                                     // mesuré : 2,8e-13
+    CHECK(eSplit < 1e-4);                                       // mesuré : 3,9e-5 (borné)
+    CHECK(qSplit < 1e-14);
+    CHECK(lzRk4 > 1e-6 && lzRk4 < 1e-4);                        // mesuré : 5,1e-6 : RK4 laisse dériver L_z (1e7 fois plus que le découpage)
+    CHECK(eRk4 < 5e-6);                                         // mesuré : 7,5e-7 : à ce pas RK4 conserve mieux l'énergie sur 100 s
+    CHECK(lzLie > 1e-3);                                        // mesuré : 7,5e-3 : le groupe de Lie d'ordre 2 dérive en L_z ...
+    CHECK(eLie > 1e-4 && eLie < 0.05);                          // ... et en énergie (mesuré 2,3e-3)
+    CHECK(qLie < 1e-14 && qRk4 < 1e-14);
+
+    // Précession régulière sur 10 s en 2000 pas : theta reste constant au moins à 1e-5 près pour RK4 et le découpage ; Heun s'en écarte de 1e-3.
+    HeavyTopProblem st = makeTop();
+    const SteadyPrecession sp = st.steadyPrecession(0.8, 25.0, true);
+    st.startSteady(sp);
+    const RotationState exact = st.exactSteady(sp, 10.0);
+    const RotationState a = integrateRotation(rk4, st.inertia, st.torque(), {st.q0, st.omega0}, 10.0, 2000);
+    const RotationState b = integrateRotation(splitting, st.inertia, st.torque(), {st.q0, st.omega0}, 10.0, 2000);
+    const RotationState c = integrateRotation(lie, st.inertia, st.torque(), {st.q0, st.omega0}, 10.0, 2000);
+    CHECK_NEAR(rotationDistance(a, exact), 0.0, 1e-4);          // mesuré : 5e-5
+    CHECK_NEAR(rotationDistance(b, exact), 0.0, 5e-4);          // mesuré : 2e-4
+    CHECK(rotationDistance(c, exact) > 1e-3);                   // mesuré : 8e-3
+    CHECK_NEAR(st.cosTheta(a.q), std::cos(0.8), 1e-5);          // mesuré : 1,3e-6
+    CHECK_NEAR(st.cosTheta(b.q), std::cos(0.8), 5e-5);          // mesuré : 8e-6
+    CHECK(std::abs(st.cosTheta(c.q) - std::cos(0.8)) > 1e-4);   // mesuré : 8,8e-4
+}
+
 void testPeriapsisTracker() {
     // Solution exacte échantillonnée grossièrement (50 points par période, décalés pour ne pas tomber pile sur un
     // périastre) : exactement 5 périastres sur 5,3 périodes, tous à l'angle 0 (orbite fermée, pas de précession).
@@ -2521,6 +3223,22 @@ int main() {
     testCradleGap();
     testCradleConvergence();
     testHertzDamping();
+    testInertiaTensors();
+    testEulerEquations();
+    testFreeBodyInvariants();
+    testSymmetricTopExact();
+    testJacobiFunctions();
+    testAsymmetricExact();
+    testIntermediateAxisInstability();
+    testRotationIntegratorBasics();
+    testSplittingConservation();
+    testRotationOrders();
+    testRotationDrift();
+    testHeavyTopInvariants();
+    testHeavyTopSteadyPrecession();
+    testNutationPeriod();
+    testSleepingTop();
+    testRotationIntegratorsWithTorque();
 
     if (g_failures == 0) {
         std::puts("test_core : OK");
