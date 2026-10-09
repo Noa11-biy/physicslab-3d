@@ -1,0 +1,6 @@
+{
+  "name": "cours-physicslab",
+  "private": true,
+  "description": "Génère le cours Word (et PDF) « La mécanique par la simulation »",
+  "dependencies": { "docx": "^9", "jszip": "^3" }
+}
