@@ -187,9 +187,9 @@ include/physicslab/
 src/core, src/mechanics, src/render   implémentations
 src/app/       Application (fenêtre, thème, disposition, menu, boucle), SimulationModule (interface),
                UiCommon (SolverSet, StepClock, drawResultTable, Series, sliders), un module par simulation ; GpuTest (`--gpu-test`, validation GPU/CPU), GpuNBodyModule (`--sim 11`)
+tools/         screenshot.ps1 (capture automatique) ; cours/ (générateur du cours Word et PDF : texte, mise en page, figures, calcul des corrigés)
 shaders/       line.vert, line.frag, nbody.comp (accélérations + potentiel), nbody_step.comp (coup de pied et dérive)
 tests/         test_core.cpp (un seul exécutable, CHECK/CHECK_NEAR maison)
-tools/         screenshot.ps1 (capture automatique pour vérifier l'interface)
 third_party/   glfw 3.4, imgui v1.92.9b-docking, implot v1.0 (sous-modules) ; glad généré (GL 4.5 core) versionné
 ```
 
@@ -315,7 +315,7 @@ Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3
 
 À faire dans l'ordre, en validant chaque livrable avec l'utilisateur (règle de fin de domaine, section 1) :
 1. **Devlog complet : FAIT** dans `docs/devlog/` (un fichier par module M0 à M7 et un index `README.md` : chronologie, méthode, ordres mesurés, tableau « ce que la mesure a corrigé », comment revérifier). Les chiffres viennent de la section 2 et des journaux de `--gpu-test` ; quatre valeurs clés ont été recalculées sur le code. À tenir à jour si un chiffre change.
-2. **Cours compilé** (PDF ou Word) dans `docs/cours/`, pour expliquer à des non-initiés (l'utilisateur est professeur et s'en sert avec ses élèves) : de la chute libre au N-corps GPU, un chapitre par module, analogies, schémas, zéro pré-requis.
+2. **Cours compilé : FAIT** dans `docs/cours/` (`La-mecanique-par-la-simulation.docx` et `.pdf`, 75 pages, environ 27 000 mots) : 7 chapitres, chacun en **six niveaux** (N1 à N6) + « Dans le logiciel » (captures réelles) + exercices rangés par niveau (**64 exercices corrigés**, annexe A) + « À retenir » ; avant-propos, table des matières (champ Word avec numéros de page), conclusion en dix idées, glossaire, formulaire, annexe logiciel, références ; vraies équations Word (OMML) ; figures tracées avec les solveurs du projet. Le générateur est dans `tools/cours/` (voir son README : les pièges de la conversion LibreOffice y sont notés).
 3. **Roue des domaines** pour choisir le module suivant (Ondes, Thermodynamique, Électrodynamique, Fluides, Plasma, Atomique/Quantique/Nucléaire, Relativité/Astro/Cosmologie, Appliqués).
 4. **Prompt de reprise court** prêt à copier (section 8 à jour).
 5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1`** : actions visibles sur le dépôt public, à confirmer avec l'utilisateur avant de les faire.
@@ -353,5 +353,5 @@ Options de l'application : `--level 1..6`, `--sim 1..11` (1 = M1, 2 = M2, 3 = M3
 ## 8. Prompt de reprise (à coller dans la nouvelle conversation)
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges), puis `README.md`. Vérifie que ça compile et que les tests passent (section 5, y compris `--gpu-test`).
-> La Mécanique est terminée (M0 à M7). Présente-moi un plan court des livrables de fin de domaine (devlog, cours pour non-initiés en PDF ou Word, roue des domaines, prompt de reprise ; merge de `module/mecanique` dans `main` et tag `mecanique-1`
-> seulement après mon accord), puis fais-les un par un. Réponses courtes, en français.
+> La Mécanique est terminée (M0 à M7) ; le devlog (`docs/devlog/`) et le cours (`docs/cours/`) sont faits. Il reste la roue des domaines et le prompt de reprise court, puis, seulement après mon accord, le merge de `module/mecanique` dans `main` et le tag `mecanique-1`.
+> Réponses courtes, en français.
