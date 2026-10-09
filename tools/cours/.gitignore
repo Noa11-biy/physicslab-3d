@@ -1,0 +1,10 @@
+node_modules/
+img/
+data/
+pg/
+*.docx
+*.pdf
+pages.json
+headings.json
+sheet_*.png
+package-lock.json
