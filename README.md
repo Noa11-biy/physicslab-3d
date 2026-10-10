@@ -33,7 +33,7 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
-./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 12 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7, O0)
+./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 13 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7, O0, O1)
 ./build/physicslab --gpu-test               # M7 : compare le calcul N-corps du GPU (compute shader) au CPU double, mesure les temps
 ```
 
@@ -71,7 +71,7 @@ Ordre de progression (cocher au fil des modules) :
   - [x] M7 : N-corps sur GPU (compute shader, float ou double, kick-drift-kick sur GPU, comparaison au CPU double ; `--sim 11`, `--gpu-test`)
 - [ ] Ondes (acoustique, optique), en cours sur la branche `module/ondes`
   - [x] O0 : socle (FFT, équation d'onde 1D et 2D en saute-mouton, bords fixe / libre / éponge, relief coloré ; `--sim 12`)
-  - [ ] O1 : corde vibrante (modes propres f_n = n c / 2L, chaîne de masses)
+  - [x] O1 : corde vibrante (chaîne de masses intégrée par les solveurs de la Mécanique, modes propres f_n = n c / 2L, harmoniques absents, dispersion, spectre FFT ; `--sim 13`)
   - [ ] O2 : dispersion numérique et condition CFL
   - [ ] O3 : cuve à ondes 2D sur GPU (réflexion, réfraction de Snell-Descartes)
   - [ ] O4 : interférences de Young et diffraction
