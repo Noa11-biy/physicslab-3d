@@ -114,6 +114,10 @@ double peakFrequency(const std::vector<double>& samples, double sampleRate, doub
     if (samples.size() < 8) return 0.0;
     double df = 0.0;
     const std::vector<double> s = windowedSpectrum(samples, sampleRate, 4, &df);
+    return peakFromSpectrum(s, df, guess, searchFraction);
+}
+
+double peakFromSpectrum(const std::vector<double>& s, double df, double guess, double searchFraction) {
     const double lo = guess * (1.0 - searchFraction), hi = guess * (1.0 + searchFraction);
     std::size_t best = 0;
     double bestValue = 0.0;

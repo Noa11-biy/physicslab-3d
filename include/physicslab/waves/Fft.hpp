@@ -35,8 +35,11 @@ std::vector<double> amplitudeSpectrum(const std::vector<double>& x);
 // utile pour la FORME et les positions des raies, pas pour leur hauteur absolue.
 std::vector<double> windowedSpectrum(const std::vector<double>& samples, double sampleRate, int padding, double* binWidth);
 
-// Fréquence [Hz] du pic spectral le plus haut dans [guess (1 - searchFraction), guess (1 + searchFraction)], par interpolation
-// parabolique du logarithme de l'amplitude autour du maximum (fenêtre de Hann, remplissage x4). Renvoie 0 s'il n'y a pas de pic.
+// Fréquence [Hz] du pic le plus haut d'un spectre déjà calculé (cases de largeur binWidth) dans [guess (1 - searchFraction),
+// guess (1 + searchFraction)], par interpolation parabolique du logarithme de l'amplitude autour du maximum. 0 s'il n'y a pas de pic.
+double peakFromSpectrum(const std::vector<double>& spectrum, double binWidth, double guess, double searchFraction = 0.25);
+
+// Idem depuis les échantillons : fenêtre de Hann, remplissage x4, puis peakFromSpectrum.
 double peakFrequency(const std::vector<double>& samples, double sampleRate, double guess, double searchFraction = 0.25);
 
 }  // namespace pl::waves

@@ -14,7 +14,7 @@ struct AppOptions {
     int level = 3;
     // Simulation affichée au démarrage (1 = M1 projectile, 2 = M2 ressort-masse, 3 = M3 pendule simple, 4 = M3b pendule double,
     // 5 = M4a orbite de Kepler, 6 = M4b problème à N corps, 7 = M5a frottement sec, 8 = M5b chocs et rebonds, 9 = M5c berceau de Newton, 10 = M6 corps rigide, 11 = M7 N corps sur GPU,
-    // 12 = O0 une impulsion sur une grille).
+    // 12 = O0 une impulsion sur une grille, 13 = O1 corde vibrante).
     int simulation = 1;
 };
 
