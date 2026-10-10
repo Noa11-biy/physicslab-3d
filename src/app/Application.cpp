@@ -34,6 +34,7 @@
 #include "SimulationModule.hpp"
 #include "StringModule.hpp"
 #include "WaveModule.hpp"
+#include "WaveTankModule.hpp"
 #include "physicslab/core/Level.hpp"
 #include "physicslab/render/Camera.hpp"
 #include "physicslab/render/Renderer.hpp"
@@ -346,6 +347,7 @@ int App::run(const AppOptions& options) {
     modules_.push_back(std::make_unique<WaveModule>());
     modules_.push_back(std::make_unique<StringModule>());
     modules_.push_back(std::make_unique<DispersionModule>());
+    modules_.push_back(std::make_unique<WaveTankModule>(PHYSICSLAB_SHADER_DIR));
     activate(std::clamp(options.simulation - 1, 0, static_cast<int>(modules_.size()) - 1));
 
     using Clock = std::chrono::steady_clock;

@@ -81,7 +81,8 @@ add_executable(physicslab
     src/app/RigidBodyModule.cpp
     src/app/WaveModule.cpp
     src/app/StringModule.cpp
-    src/app/DispersionModule.cpp)
+    src/app/DispersionModule.cpp
+    src/app/WaveTankModule.cpp)
 target_link_libraries(physicslab PRIVATE physicslab_core physicslab_render glfw imgui implot)
 target_compile_definitions(physicslab PRIVATE
     PHYSICSLAB_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")
