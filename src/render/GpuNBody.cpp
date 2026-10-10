@@ -5,66 +5,10 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <sstream>
+
+#include "physicslab/render/GpuProgram.hpp"
 
 namespace pl {
-namespace {
-
-// Source du compute shader, complétée juste après la ligne #version par les #define de configuration.
-bool loadShaderSource(const std::string& path, const std::string& defines, std::string& out) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        std::fprintf(stderr, "GpuNBody : impossible de lire %s\n", path.c_str());
-        return false;
-    }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    const std::string text = ss.str();
-    const std::size_t eol = text.find('\n');
-    if (text.compare(0, 8, "#version") != 0 || eol == std::string::npos) {
-        std::fprintf(stderr, "GpuNBody : %s doit commencer par #version\n", path.c_str());
-        return false;
-    }
-    out = text.substr(0, eol + 1) + defines + text.substr(eol + 1);
-    return true;
-}
-
-// Compile et lie un programme de calcul. Renvoie 0 en cas d'échec (message sur stderr).
-GLuint buildComputeProgram(const std::string& path, const std::string& defines) {
-    std::string source;
-    if (!loadShaderSource(path, defines, source)) return 0;
-
-    const GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
-    const char* text = source.c_str();
-    glShaderSource(shader, 1, &text, nullptr);
-    glCompileShader(shader);
-    GLint ok = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[2048];
-        glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-        std::fprintf(stderr, "GpuNBody : erreur de compilation de %s :\n%s\n", path.c_str(), log);
-        glDeleteShader(shader);
-        return 0;
-    }
-
-    const GLuint program = glCreateProgram();
-    glAttachShader(program, shader);
-    glLinkProgram(program);
-    glDeleteShader(shader);
-    glGetProgramiv(program, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[2048];
-        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
-        std::fprintf(stderr, "GpuNBody : erreur d'édition de liens de %s :\n%s\n", path.c_str(), log);
-        glDeleteProgram(program);
-        return 0;
-    }
-    return program;
-}
-
-}  // namespace
 
 GpuLimits queryGpuLimits() {
     GpuLimits g;
@@ -132,8 +76,8 @@ bool GpuNBody::init(const std::string& shaderDir, GpuPrecision precision, int wo
 
     std::string defines = "#define WG " + std::to_string(wg_) + "\n";
     if (precision_ == GpuPrecision::Double) defines += "#define GPU_DOUBLE\n";
-    program_ = buildComputeProgram(shaderDir + "/nbody.comp", defines);
-    stepProgram_ = buildComputeProgram(shaderDir + "/nbody_step.comp", defines);
+    program_ = buildComputeProgram(shaderDir + "/nbody.comp", defines, "GpuNBody");
+    stepProgram_ = buildComputeProgram(shaderDir + "/nbody_step.comp", defines, "GpuNBody");
     if (!program_ || !stepProgram_) {
         shutdown();
         return false;

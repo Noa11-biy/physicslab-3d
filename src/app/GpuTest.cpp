@@ -12,6 +12,8 @@
 #include "physicslab/core/Vec3.hpp"
 #include "physicslab/mechanics/NBody.hpp"
 #include "physicslab/render/GpuNBody.hpp"
+#include "physicslab/render/GpuWave2D.hpp"
+#include "physicslab/waves/Wave.hpp"
 
 namespace pl {
 namespace {
@@ -366,6 +368,181 @@ IntegrationResult integrationCase(const char* name, const NBodyProblem& p, GpuNB
     return r;
 }
 
+// ------------------------------------------------ O3 : équation d'onde 2D ----
+
+struct WaveDiff {
+    double maxRel = 0.0;  // max |gpu - cpu| / max |cpu|
+    double l2Rel = 0.0;   // ||gpu - cpu|| / ||cpu||
+    double cpuMax = 0.0;
+};
+
+// Avance le CPU `double` et le GPU `float` du même nombre de pas depuis le même état, et compare les champs.
+WaveDiff waveCompare(waves::Wave2D& cpu, GpuWave2D& gpu, int steps) {
+    gpu.upload(cpu);
+    gpu.step(steps);
+    cpu.advance(steps);
+    std::vector<float> g;
+    gpu.readField(g);
+    WaveDiff d;
+    double num = 0.0, den = 0.0;
+    for (std::size_t i = 0; i < g.size(); ++i) {
+        const double diff = static_cast<double>(g[i]) - cpu.u()[i];
+        d.maxRel = std::max(d.maxRel, std::abs(diff));
+        num += diff * diff;
+        den += cpu.u()[i] * cpu.u()[i];
+    }
+    d.cpuMax = cpu.maxAbs();
+    d.maxRel = d.cpuMax > 0.0 ? d.maxRel / d.cpuMax : 0.0;
+    d.l2Rel = den > 0.0 ? std::sqrt(num / den) : 0.0;
+    return d;
+}
+
+void waveGpuTests(const std::string& shaderDir) {
+    std::printf("\n[5] Équation d'onde 2D en milieu variable (O3) : GPU float contre CPU double\n");
+    GpuWave2D gpu;
+    if (!gpu.init(shaderDir)) {
+        check(false, "le compute shader wave2d.comp ne se compile pas");
+        return;
+    }
+    const double pi = 3.14159265358979323846;
+    constexpr double kMaxL2 = 2e-5;  // mesuré : quelques 1e-7 à 1e-6 ; marge d'un ordre de grandeur sur la pire erreur d'arrondi float observée
+
+    // a. milieu uniforme, source ponctuelle sinusoïdale, bords absorbants
+    {
+        waves::Wave2DParams p;
+        p.cellsX = p.cellsY = 255;
+        p.dx = 1.0 / 32.0;
+        p.cfl = 0.6;
+        p.left = p.right = p.bottom = p.top = waves::Edge::Absorbing;
+        p.spongeCells = 38;
+        waves::Wave2D cpu(p);
+        waves::PointSource s;
+        s.x = s.y = 0.5 * p.cellsX * p.dx;
+        s.omega = 4.0 * pi;
+        cpu.addSource(s);
+        const WaveDiff d = waveCompare(cpu, gpu, 600);
+        std::printf("  uniforme + source, 256 x 256, 600 pas : écart max %.2e, L2 %.2e (|u|max = %.3f)\n", d.maxRel, d.l2Rel, d.cpuMax);
+        check(d.l2Rel <= kMaxL2, "milieu uniforme : écart L2 GPU / CPU trop grand");
+    }
+    // b. interface entre deux milieux, paquet d'ondes oblique
+    {
+        waves::Wave2DParams p;
+        p.cellsX = 299;
+        p.cellsY = 239;
+        p.dx = 0.05;
+        p.cfl = 0.5;
+        p.left = p.right = p.bottom = p.top = waves::Edge::Absorbing;
+        p.spongeCells = 20;
+        p.speedField = waves::Wave2D::makeSpeedField(p, [](double x, double) { return x < 7.0 ? 1.0 : 0.6; });
+        waves::Wave2D cpu(p);
+        const double k = 4.0 * pi, th = 30.0 * pi / 180.0, x0 = 4.5, y0 = 4.0;
+        const auto env = [](double dx, double dy) { return std::exp(-0.5 * (dx * dx + dy * dy) / 0.25); };
+        cpu.setStates([&](double x, double y) { return env(x - x0 + std::cos(th) * cpu.dt(), y - y0 + std::sin(th) * cpu.dt()) * std::cos(k * ((x - x0) * std::cos(th) + (y - y0) * std::sin(th)) + k * cpu.dt()); },
+                      [&](double x, double y) { return env(x - x0, y - y0) * std::cos(k * ((x - x0) * std::cos(th) + (y - y0) * std::sin(th))); });
+        const WaveDiff d = waveCompare(cpu, gpu, 500);
+        std::printf("  interface c = 1 / 0,6 + paquet, 300 x 240, 500 pas : écart max %.2e, L2 %.2e\n", d.maxRel, d.l2Rel);
+        check(d.l2Rel <= kMaxL2, "interface : écart L2 GPU / CPU trop grand");
+    }
+    // c. lentille lente circulaire, deux sources, bords mixtes (gauche et droite fixes, bas libre, haut absorbant)
+    {
+        waves::Wave2DParams p;
+        p.cellsX = p.cellsY = 199;
+        p.dx = 0.04;
+        p.cfl = 0.6;
+        p.left = p.right = waves::Edge::Fixed;
+        p.bottom = waves::Edge::Free;
+        p.top = waves::Edge::Absorbing;
+        p.spongeCells = 20;
+        p.speedField = waves::Wave2D::makeSpeedField(p, [](double x, double y) {
+            return (x - 4.0) * (x - 4.0) + (y - 4.0) * (y - 4.0) < 1.2 * 1.2 ? 0.5 : 1.0;
+        });
+        waves::Wave2D cpu(p);
+        waves::PointSource a, b;
+        a.x = 2.0; a.y = 2.0; a.omega = 6.0 * pi;
+        b.x = 6.0; b.y = 2.0; b.omega = 6.0 * pi; b.amplitude = 0.7;
+        cpu.addSource(a);
+        cpu.addSource(b);
+        const WaveDiff d = waveCompare(cpu, gpu, 400);
+        std::printf("  lentille + 2 sources + bords mixtes (fixe, libre, éponge), 200 x 200, 400 pas : écart max %.2e, L2 %.2e\n", d.maxRel, d.l2Rel);
+        check(d.l2Rel <= kMaxL2, "lentille et bords mixtes : écart L2 GPU / CPU trop grand");
+    }
+    // d. dimensions qui ne sont pas un multiple du groupe de travail (16 x 16) : groupes de bord incomplets
+    {
+        waves::Wave2DParams p;
+        p.cellsX = 202;
+        p.cellsY = 116;
+        p.dx = 0.05;
+        p.cfl = 0.6;
+        p.left = p.right = p.bottom = p.top = waves::Edge::Free;
+        waves::Wave2D cpu(p);
+        cpu.setInitial([](double x, double y) { return std::exp(-((x - 5.0) * (x - 5.0) + (y - 3.0) * (y - 3.0)) / 0.08); });
+        const WaveDiff d = waveCompare(cpu, gpu, 300);
+        std::printf("  203 x 117 (pas un multiple de 16), 4 bords libres, 300 pas : écart max %.2e, L2 %.2e\n", d.maxRel, d.l2Rel);
+        check(d.l2Rel <= kMaxL2, "dimensions quelconques : écart L2 GPU / CPU trop grand");
+    }
+    // e. longue durée : l'écart float / double croît-il ? (4 murs, aucune dissipation ; le GPU relit l'état tous les 1000 pas)
+    {
+        waves::Wave2DParams p;
+        p.cellsX = p.cellsY = 127;
+        p.dx = 0.05;
+        p.cfl = 0.6;
+        waves::Wave2D cpu(p);
+        cpu.setInitial([](double x, double y) { return std::exp(-((x - 3.0) * (x - 3.0) + (y - 3.3) * (y - 3.3)) / 0.05); });
+        gpu.upload(cpu);
+        std::printf("  4 murs, 128 x 128, bosse lâchée (écart float / double en fonction du nombre de pas) :\n");
+        double last = 0.0;
+        for (int block = 1; block <= 4; ++block) {
+            gpu.step(2500);
+            cpu.advance(2500);
+            std::vector<float> g;
+            gpu.readField(g);
+            double num = 0.0, den = 0.0;
+            for (std::size_t i = 0; i < g.size(); ++i) {
+                const double diff = static_cast<double>(g[i]) - cpu.u()[i];
+                num += diff * diff;
+                den += cpu.u()[i] * cpu.u()[i];
+            }
+            last = std::sqrt(num / den);
+            std::printf("    %5d pas : L2 %.2e\n", 2500 * block, last);
+        }
+        check(last <= 1e-3, "longue durée : l'écart float / double devient trop grand");
+    }
+
+    // f. débit : noeuds mis à jour par seconde
+    std::printf("  débit (noeuds mis à jour par seconde ; le CPU a 1 thread, en double") ;
+#ifdef NDEBUG
+    std::printf(", build Release) :\n");
+#else
+    std::printf(", build Debug : 5 à 10 fois plus lent qu'en Release) :\n");
+#endif
+    std::printf("    %10s %14s %14s %12s\n", "grille", "GPU float", "CPU double", "GPU / CPU");
+    for (int side : {256, 512, 1024}) {
+        waves::Wave2DParams p;
+        p.cellsX = p.cellsY = side - 1;
+        p.dx = 0.02;
+        p.cfl = 0.6;
+        p.left = p.right = p.bottom = p.top = waves::Edge::Absorbing;
+        p.spongeCells = 30;
+        waves::Wave2D cpu(p);
+        waves::PointSource s;
+        s.x = s.y = 0.5 * side * p.dx;
+        s.omega = 8.0 * pi;
+        cpu.addSource(s);
+        gpu.upload(cpu);
+        gpu.step(10);  // échauffement
+        const int steps = side <= 256 ? 400 : (side <= 512 ? 200 : 100);
+        const double gpuSeconds = gpu.benchmark(steps);
+        const double nodes = static_cast<double>(side) * side * steps;
+        const int cpuSteps = side <= 256 ? 40 : (side <= 512 ? 10 : 4);
+        const auto c0 = Clock::now();
+        cpu.advance(cpuSteps);
+        const double cpuSeconds = seconds(c0, Clock::now());
+        const double cpuRate = static_cast<double>(side) * side * cpuSteps / cpuSeconds, gpuRate = nodes / gpuSeconds;
+        std::printf("    %4d x %-4d %11.2f M/s %11.2f M/s %10.0f x\n", side, side, gpuRate * 1e-6, cpuRate * 1e-6, gpuRate / cpuRate);
+    }
+    gpu.shutdown();
+}
+
 }  // namespace
 
 int runGpuTest(const std::string& shaderDir, int maxN) {
@@ -529,6 +706,8 @@ int runGpuTest(const std::string& shaderDir, int maxN) {
         check(r5000.gpu.momentum <= kMaxDriftFloat, "amas N = 5000 : dérive d'impulsion du GPU float trop grande");
         check(r5000.gpu.angular <= kMaxDriftFloat, "amas N = 5000 : dérive de moment cinétique du GPU float trop grande");
     }
+
+    waveGpuTests(shaderDir);
 
     gpuF.shutdown();
     gpuD.shutdown();

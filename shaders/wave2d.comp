@@ -1,0 +1,51 @@
+#version 450
+// O3 : un pas du schéma saute-mouton de l'équation d'onde 2D u_tt = div(c² grad u) en milieu variable, voir waves/Wave.hpp (Wave2D::step) et GpuWave2D.hpp.
+//
+//   next = (2 cur - (1 - s) prev + [ sum des 4 flux  k_face (u_voisin - u) ]) / (1 + s),   s = sigma dt (éponge)
+//
+// Mêmes formules que le CPU `double`, en float : k_face = (dt² / dx²) c²_face (moyenne arithmétique des c² des deux noeuds), calculés une fois en double
+// sur le CPU. Un thread par noeud. Bord fixe ou absorbant : u = 0 (noeud non mis à jour) ; bord libre : point fantôme symétrique (face symétrique).
+// Les sources ponctuelles sont ajoutées au noeud : leur valeur pour CE pas (ratio * A * rampe(t) * sin(w t)) est calculée en double sur le CPU.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, binding = 0) readonly buffer Prev { float prevU[]; };
+layout(std430, binding = 1) readonly buffer Cur { float curU[]; };
+layout(std430, binding = 2) writeonly buffer Next { float nextU[]; };
+layout(std430, binding = 3) readonly buffer CoefX { float kx[]; };     // face entre k et k + 1
+layout(std430, binding = 4) readonly buffer CoefY { float ky[]; };     // face entre k et k + nx
+layout(std430, binding = 5) readonly buffer Sigma { float sigmaField[]; };
+
+uniform int uNx;           // nombre de noeuds en x (cellsX + 1)
+uniform int uNy;
+uniform float uDt;
+uniform ivec4 uFree;       // bord libre (1) ou fixe / absorbant (0) : gauche, droite, bas, haut
+uniform int uSourceCount;
+uniform ivec2 uSourceNode[4];
+uniform float uSourceValue[4];
+
+void main() {
+    const ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= uNx || p.y >= uNy) return;
+    const int k = p.y * uNx + p.x;
+
+    const bool fixedNode = (p.x == 0 && uFree.x == 0) || (p.x == uNx - 1 && uFree.y == 0) || (p.y == 0 && uFree.z == 0) || (p.y == uNy - 1 && uFree.w == 0);
+    if (fixedNode) {
+        nextU[k] = 0.0;
+        return;
+    }
+
+    const float c = curU[k];
+    float flux = 0.0;
+    // ouest, est, sud, nord ; au-delà d'un bord libre : face symétrique (même coefficient, voisin opposé)
+    if (p.x > 0) flux += kx[k - 1] * (curU[k - 1] - c); else if (uFree.x == 1) flux += kx[k] * (curU[k + 1] - c);
+    if (p.x < uNx - 1) flux += kx[k] * (curU[k + 1] - c); else if (uFree.y == 1) flux += kx[k - 1] * (curU[k - 1] - c);
+    if (p.y > 0) flux += ky[k - uNx] * (curU[k - uNx] - c); else if (uFree.z == 1) flux += ky[k] * (curU[k + uNx] - c);
+    if (p.y < uNy - 1) flux += ky[k] * (curU[k + uNx] - c); else if (uFree.w == 1) flux += ky[k - uNx] * (curU[k - uNx] - c);
+
+    const float s = sigmaField[k] * uDt;
+    float v = (2.0 * c - (1.0 - s) * prevU[k] + flux) / (1.0 + s);
+    for (int m = 0; m < uSourceCount; ++m)
+        if (p == uSourceNode[m]) v += uSourceValue[m];
+    nextU[k] = v;
+}

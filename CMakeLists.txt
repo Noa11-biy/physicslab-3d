@@ -55,9 +55,11 @@ add_library(physicslab_render STATIC
     src/render/Camera.cpp
     src/render/Renderer.cpp
     src/render/FieldPlot.cpp
-    src/render/GpuNBody.cpp)
+    src/render/GpuProgram.cpp
+    src/render/GpuNBody.cpp
+    src/render/GpuWave2D.cpp)
 target_include_directories(physicslab_render PUBLIC include)
-target_link_libraries(physicslab_render PUBLIC glad)
+target_link_libraries(physicslab_render PUBLIC glad physicslab_core)
 physicslab_warnings(physicslab_render)
 
 # --- Application ---
