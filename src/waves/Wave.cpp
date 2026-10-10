@@ -70,6 +70,17 @@ void Wave1D::setInitial(const std::function<double(double)>& u0, const std::func
     steps_ = 0;
 }
 
+void Wave1D::setStates(const std::function<double(double)>& previous, const std::function<double(double)>& current) {
+    const int n = p_.cells;
+    for (int i = 0; i <= n; ++i) {
+        prev_[i] = previous(x(i));
+        cur_[i] = current(x(i));
+    }
+    if (p_.left != Edge::Free) { prev_[0] = 0.0; cur_[0] = 0.0; }
+    if (p_.right != Edge::Free) { prev_[n] = 0.0; cur_[n] = 0.0; }
+    steps_ = 0;
+}
+
 void Wave1D::step() {
     const int n = p_.cells;
     const double c2 = p_.cfl * p_.cfl;

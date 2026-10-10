@@ -10,6 +10,7 @@
 
 #include "physicslab/core/Constants.hpp"
 #include "physicslab/core/Solver.hpp"
+#include "physicslab/waves/Dispersion.hpp"
 #include "physicslab/waves/Fft.hpp"
 #include "physicslab/waves/String.hpp"
 #include "physicslab/waves/Wave.hpp"
@@ -738,6 +739,258 @@ void testStringFrequencies() {
     std::printf("  ecart relatif max a la chaine : spectre exact %.1e, spectre RK4 %.1e\n", worstExact, worstRk4);
 }
 
+// ------------------------------------------- dispersion et CFL (O2) --------
+
+namespace dsp = pl::waves::dispersion;
+
+void testDispersionFormulas() {
+    // C = 1 : la vitesse de phase et celle de groupe valent exactement c (erreurs d'espace et de temps compensées)
+    for (double x : {0.1, 0.5, 1.0, 2.0, 3.0}) {
+        CHECK_NEAR(dsp::phaseRatio1D(x, 1.0), 1.0, 1e-14);
+        CHECK_NEAR(dsp::groupRatio1D(x, 1.0), 1.0, 1e-14);
+    }
+    // petite phase : 1 - (1 - C²) x² / 24 + O(x^4)
+    {
+        const double x = 0.1, c = 0.5;
+        CHECK_NEAR(dsp::phaseRatio1D(x, c), 1.0 - (1.0 - c * c) * x * x / 24.0, 1e-7);
+    }
+    // la vitesse de groupe est la dérivée de w : w dt / ... = x * phaseRatio ; différences finies centrées
+    for (double c : {0.3, 0.9}) {
+        for (double x : {0.4, 1.0, 2.0}) {
+            const double h = 1e-5;
+            const double fd = ((x + h) * dsp::phaseRatio1D(x + h, c) - (x - h) * dsp::phaseRatio1D(x - h, c)) / (2.0 * h);
+            CHECK_NEAR(fd, dsp::groupRatio1D(x, c), 1e-8);
+        }
+    }
+    // C -> 0 : espace seul, c'est la chaîne de masses d'O1
+    for (double x : {0.5, 1.5, 3.0}) {
+        CHECK_NEAR(dsp::phaseRatio1D(x, 0.0), std::sin(0.5 * x) / (0.5 * x), 1e-15);
+        CHECK_NEAR(dsp::phaseRatio1D(x, 1e-9), dsp::phaseRatio1D(x, 0.0), 1e-12);
+        CHECK_NEAR(dsp::groupRatio1D(x, 0.0), std::cos(0.5 * x), 1e-15);
+    }
+    // onde non propagée : NaN
+    CHECK(std::isnan(dsp::phaseRatio1D(3.0, 1.2)));
+    // 2D : sur l'axe on retrouve le 1D ; l'écart au continu vaut (x² / 24)(cos⁴ + sin⁴ - C²) : plus faible en diagonale
+    for (double x : {0.3, 1.0}) CHECK_NEAR(dsp::phaseRatio2D(x, 0.0, 0.6), dsp::phaseRatio1D(x, 0.6), 1e-15);
+    {
+        const double x = 0.1, c = 0.6, a = 0.3;
+        const double axis = dsp::phaseRatio2D(x, a * 0.0, c), diag = dsp::phaseRatio2D(x, dsp::kPi / 4.0, c);
+        CHECK_NEAR(axis, 1.0 - x * x / 24.0 * (1.0 - c * c), 1e-7);
+        CHECK_NEAR(diag, 1.0 - x * x / 24.0 * (0.5 - c * c), 1e-7);
+        // à C = 1/sqrt(2) la grille 2D est exacte (à l'ordre dominant) EN DIAGONALE
+        CHECK_NEAR(dsp::phaseRatio2D(x, dsp::kPi / 4.0, dsp::cflLimit(2)), 1.0, 1e-7);
+    }
+    // croissance : 1 si stable, sinon (C + sqrt(C² - 1))² pour le mode de Nyquist en 1D
+    CHECK_NEAR(dsp::growthPerStep1D(2.0, 1.0), 1.0, 0.0);
+    {
+        const double c = 1.05, x = dsp::kPi;
+        const double expected = (c + std::sqrt(c * c - 1.0)) * (c + std::sqrt(c * c - 1.0));
+        CHECK_NEAR(dsp::growthPerStep1D(x, c), expected, 1e-13);
+    }
+    std::printf("  C = 0.5, x = k dx = 1 (6.3 cases par longueur d'onde) : v_phase / c = %.6f, v_group / c = %.6f ; chaine (C -> 0) : %.6f, %.6f\n",
+                dsp::phaseRatio1D(1.0, 0.5), dsp::groupRatio1D(1.0, 0.5), dsp::phaseRatio1D(1.0, 0.0), dsp::groupRatio1D(1.0, 0.0));
+    std::printf("  2D, C = 0.6, x = 1 : v_phase / c = %.6f sur l'axe, %.6f en diagonale ; C = 1/sqrt(2) : diagonale %.6f (x = 0.1 : %.8f)\n",
+                dsp::phaseRatio2D(1.0, 0.0, 0.6), dsp::phaseRatio2D(1.0, dsp::kPi / 4.0, 0.6), dsp::phaseRatio2D(1.0, dsp::kPi / 4.0, dsp::cflLimit(2)),
+                dsp::phaseRatio2D(0.1, dsp::kPi / 4.0, dsp::cflLimit(2)));
+}
+
+// Un paquet d'ondes (porteuse k0 sous une enveloppe gaussienne large) avance à la vitesse de GROUPE de la grille, pas à c.
+void testGroupVelocity() {
+    const double k0dx = 1.0, x0 = 8.0, width = 0.5, duration = 6.0;
+    std::printf("  paquet d'ondes k0 dx = %.1f (%.1f cases par longueur d'onde), enveloppe 0.5 m, t = 6 s :\n    C     v_groupe/c (formule)   mesure   ecart relatif\n", k0dx, dsp::pointsPerWavelength(k0dx));
+    for (double cfl : {1.0, 0.9, 0.5, 0.2}) {
+        Wave1DParams p;
+        p.cells = 2000;
+        p.length = 20.0;
+        p.speed = 1.0;
+        p.cfl = cfl;
+        Wave1D w(p);
+        const double k0 = k0dx / w.dx();
+        const auto env = [&](double x) { return std::exp(-0.5 * (x - x0) * (x - x0) / (width * width)); };
+        // Paquet qui va PUREMENT vers la droite, avec la relation de dispersion de la grille : u^n_i = env(x_i - v_g t_n) cos(k0 x_i - w t_n).
+        // (Avec setInitial, la vitesse initiale -c f' est celle du continu : à 6 cases par longueur d'onde elle laisse 8 % d'onde de retour,
+        //  et le centre mesuré à C = 1 était 1,5 % trop lent alors que la grille y est exacte.)
+        const double vg = p.speed * dsp::groupRatio1D(k0dx, cfl);
+        const double omegaDt = 2.0 * std::asin(cfl * std::sin(0.5 * k0dx));
+        w.setStates([&](double x) { return env(x + vg * w.dt()) * std::cos(k0 * (x - x0) + omegaDt); },
+                    [&](double x) { return env(x) * std::cos(k0 * (x - x0)); });
+        w.advance(std::lround(duration / w.dt()));
+        double sum = 0.0, sumx = 0.0;
+        for (int i = 0; i < w.points(); ++i) {
+            const double u2 = w.u()[i] * w.u()[i];
+            sum += u2;
+            sumx += w.x(i) * u2;
+        }
+        const double measured = (sumx / sum - x0) / (w.time() * p.speed);
+        const double formula = dsp::groupRatio1D(k0dx, cfl);
+        CHECK(std::abs(measured / formula - 1.0) <= 3e-3);
+        std::printf("    %.1f   %.6f               %.6f   %+.1e\n", cfl, formula, measured, measured / formula - 1.0);
+    }
+}
+
+// À C = 1 un paquet cohérent avec la grille est simplement décalé d'une case par pas : solution exacte du schéma, à l'arrondi près.
+void testSetStatesShift() {
+    Wave1DParams p;
+    p.cells = 600;
+    p.length = 6.0;
+    p.cfl = 1.0;
+    Wave1D w(p);
+    const double dx = w.dx(), k0 = 1.0 / dx;
+    // enveloppe étroite et loin des murs : à 8 largeurs du bord la queue gaussienne vaut 1e-14 (à 5 largeurs elle valait 3,7e-6 et le mur fixe
+    // imposé en x = 0 donnait exactement cet écart)
+    const auto f = [&](double x) { return gaussian(x, 2.0, 0.25) * std::cos(k0 * (x - 2.0)); };
+    w.setStates([&](double x) { return f(x + dx); }, f);
+    w.advance(150);
+    double err = 0.0;
+    for (int i = 0; i < w.points(); ++i) err = std::max(err, std::abs(w.u()[i] - f(w.x(i) - 150.0 * dx)));
+    CHECK(err <= 1e-12);
+    std::printf("  setStates, C = 1 : paquet decale de 150 cases, ecart a f(x - ct) %.1e\n", err);
+}
+
+// Fréquence d'un mode propre lue dans le spectre d'une simulation (et non plus par la formule seule) : confirme la vitesse de phase.
+void testPhaseVelocityFromSpectrum() {
+    const int cells = 200;
+    const double length = 2.0, cfl = 0.5;
+    std::printf("  vitesse de phase lue dans le spectre (1D, %d cases, C = %.1f) :\n    n   x = k dx   v_phase/c formule   spectre   ecart\n", cells, cfl);
+    for (int n : {10, 40, 80, 120}) {
+        Wave1DParams p;
+        p.cells = cells;
+        p.length = length;
+        p.cfl = cfl;
+        Wave1D w(p);
+        const double k = n * dsp::kPi / length;
+        w.setInitial([&](double x) { return std::sin(k * x); });
+        const int probe = 63;  // x = 0.63 : loin des noeuds
+        std::vector<double> series;
+        for (int i = 0; i < 8192; ++i) {
+            series.push_back(w.u()[probe]);
+            w.step();
+        }
+        const double x = k * w.dx();
+        const double predicted = dsp::phaseRatio1D(x, cfl) * p.speed * k / (2.0 * dsp::kPi);  // Hz
+        const double read = peakFrequency(series, 1.0 / w.dt(), predicted, 0.05);
+        const double ratio = read * 2.0 * dsp::kPi / (p.speed * k);
+        CHECK(std::abs(read / predicted - 1.0) <= 2e-5);
+        std::printf("    %-3d %.4f    %.6f           %.6f  %+.1e\n", n, x, dsp::phaseRatio1D(x, cfl), ratio, read / predicted - 1.0);
+    }
+}
+
+// La grille 2D est anisotrope : à |k| égal, une onde en diagonale va plus vite qu'une onde le long d'un axe.
+void testAnisotropy2D() {
+    Wave2DParams p;
+    p.cellsX = p.cellsY = 60;
+    p.dx = 0.05;
+    p.cfl = 0.65;
+    const double lx = p.cellsX * p.dx;
+    std::printf("  anisotropie 2D (60 x 60 cases, C = %.2f) : modes (m, n) de |k| presque egal\n    (m, n)   |k| dx   angle   v_phase/c formule   spectre   ecart\n", p.cfl);
+    double axisRatio = 0.0, diagRatio = 0.0;
+    for (const auto& mn : std::vector<std::pair<int, int>>{{24, 1}, {17, 17}, {12, 22}}) {
+        Wave2D w(p);
+        const double kx = mn.first * dsp::kPi / lx, ky = mn.second * dsp::kPi / lx;
+        w.setInitial([&](double x, double y) { return std::sin(kx * x) * std::sin(ky * y); });
+        const int pi_ = 13, pj = 19;
+        std::vector<double> series;
+        double amp = 0.0;
+        for (int i = 0; i < 8192; ++i) {
+            series.push_back(w.u()[w.index(pi_, pj)]);
+            amp = std::max(amp, std::abs(series.back()));
+            w.step();
+        }
+        CHECK(amp > 1e-3);
+        const double kk = std::sqrt(kx * kx + ky * ky), theta = std::atan2(ky, kx), x = kk * p.dx;
+        const double formula = dsp::phaseRatio2D(x, theta, p.cfl);
+        const double predicted = formula * p.speed * kk / (2.0 * dsp::kPi);
+        const double read = peakFrequency(series, 1.0 / w.dt(), predicted, 0.05);
+        const double ratio = read * 2.0 * dsp::kPi / (p.speed * kk);
+        CHECK(std::abs(read / predicted - 1.0) <= 5e-5);
+        if (mn.first == 24) axisRatio = ratio;
+        if (mn.first == 17) diagRatio = ratio;
+        std::printf("    (%d, %d)  %.4f  %5.1f   %.6f           %.6f  %+.1e\n", mn.first, mn.second, x, theta * 180.0 / dsp::kPi, formula, ratio, read / predicted - 1.0);
+    }
+    CHECK(diagRatio > axisRatio + 0.02);  // la diagonale est nettement moins dispersive à ce C
+}
+
+// Au-delà de la limite CFL, un mode est amplifié à chaque pas du facteur prévu par la théorie (mesuré sur la simulation).
+void testGrowthRates() {
+    auto geometricGrowth = [](const std::vector<double>& history, int last) {
+        const int n = static_cast<int>(history.size());
+        return std::pow(history[n - 1] / history[n - 1 - last], 1.0 / last);
+    };
+    std::printf("  croissance par pas, mode de la grille proche de Nyquist (mesure : moyenne geometrique sur 50 pas, apres 200 pas) :\n    cas           C      formule      mesure\n");
+    for (double cfl : {1.02, 1.2}) {  // 1D, 200 cases, mode n = 190
+        Wave1DParams p;
+        p.cells = 200;
+        p.cfl = cfl;
+        Wave1D w(p);
+        const double k = 190.0 * dsp::kPi / p.length;
+        w.setInitial([&](double x) { return std::sin(k * x); });
+        std::vector<double> history;
+        for (int i = 0; i < 250; ++i) {
+            w.step();
+            history.push_back(w.maxAbs());
+        }
+        const double g = geometricGrowth(history, 50), predicted = dsp::growthPerStep1D(k * w.dx(), cfl);
+        CHECK(std::abs(g / predicted - 1.0) <= 1e-6);
+        std::printf("    1D n = 190   %.2f   %.6f   %.6f\n", cfl, predicted, g);
+    }
+    {
+        // 2D : C = 0.78 > 1/sqrt(2) ; mode (59, 58) sur 60 cases ; et C = 0.70 (stable) : aucune croissance
+        for (double cfl : {0.78, 0.70}) {
+            Wave2DParams p;
+            p.cellsX = p.cellsY = 60;
+            p.dx = 0.05;
+            p.cfl = cfl;
+            Wave2D w(p);
+            const double l = p.cellsX * p.dx;
+            const double kx = 59.0 * dsp::kPi / l, ky = 58.0 * dsp::kPi / l;
+            w.setInitial([&](double x, double y) { return std::sin(kx * x) * std::sin(ky * y); });
+            std::vector<double> history;
+            const double e0 = w.energy();
+            for (int i = 0; i < 250; ++i) {
+                w.step();
+                history.push_back(w.maxAbs());
+            }
+            const double predicted = dsp::growthPerStep2D(kx * p.dx, ky * p.dx, cfl);
+            if (cfl > dsp::cflLimit(2)) {
+                const double g = geometricGrowth(history, 50);
+                CHECK(std::abs(g / predicted - 1.0) <= 1e-6);
+                std::printf("    2D (59, 58)  %.2f   %.6f   %.6f\n", cfl, predicted, g);
+            } else {
+                // stable : le mode oscille sans croître. Le maximum INSTANTANÉ oscille (maxima sur 50 pas : 1,0005 d'écart, trop grossier) ;
+                // la bonne grandeur est l'énergie, conservée exactement.
+                const double drift = std::abs(w.energy() / e0 - 1.0);
+                CHECK(drift <= 1e-12 && predicted == 1.0);
+                std::printf("    2D (59, 58)  %.2f   %.6f   (energie finale / initiale - 1 = %.1e)\n", cfl, predicted, drift);
+            }
+        }
+    }
+}
+
+// L'erreur de dispersion d'une impulsion est proportionnelle à (1 - C²) : plus faible quand C approche de 1, nulle à C = 1.
+void testDispersionErrorConstant() {
+    const auto f = [](double x) { return gaussian(x, 2.0, 0.1); };
+    auto run = [&](double cfl) {
+        Wave1DParams p;
+        p.cells = 400;
+        p.length = 4.0;
+        p.cfl = cfl;
+        Wave1D w(p);
+        w.setInitial(f);
+        w.advance(std::lround(0.8 / w.dt()));
+        return maxError1D(w, [&](double x, double t) { return dAlembert(f, x, p.speed * t); });
+    };
+    const double e02 = run(0.2), e05 = run(0.5), e09 = run(0.9), e099 = run(0.99), e1 = run(1.0);
+    // rapport à C = 0.5 prévu par le terme dominant : (1 - C²) / (1 - 0.25)
+    const double r02 = e02 / e05, r09 = e09 / e05, r099 = e099 / e05;
+    CHECK(std::abs(r02 / (0.96 / 0.75) - 1.0) <= 0.1);
+    CHECK(std::abs(r09 / (0.19 / 0.75) - 1.0) <= 0.1);
+    CHECK(std::abs(r099 / (0.0199 / 0.75) - 1.0) <= 0.15);
+    CHECK(e1 <= 1e-13);
+    std::printf("  erreur d'une impulsion (400 cases, t = 0.8) : C = 0.2 : %.3e ; 0.5 : %.3e ; 0.9 : %.3e ; 0.99 : %.3e ; 1.0 : %.1e\n"
+                "  rapports a C = 0.5 : %.3f (prevu %.3f), %.3f (%.3f), %.3f (%.3f)\n",
+                e02, e05, e09, e099, e1, r02, 0.96 / 0.75, r09, 0.19 / 0.75, r099, 0.0199 / 0.75);
+}
+
 }  // namespace
 
 int main() {
@@ -766,6 +1019,14 @@ int main() {
     testStringStability();
     testStringIsLeapfrog();
     testStringFrequencies();
+    std::printf("Dispersion numerique et CFL (O2)\n");
+    testDispersionFormulas();
+    testSetStatesShift();
+    testGroupVelocity();
+    testPhaseVelocityFromSpectrum();
+    testAnisotropy2D();
+    testGrowthRates();
+    testDispersionErrorConstant();
 
     if (g_failures == 0) {
         std::printf("test_waves : OK\n");
