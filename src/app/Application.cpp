@@ -18,6 +18,7 @@
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
 
+#include "DispersionModule.hpp"
 #include "DoublePendulumModule.hpp"
 #include "KeplerModule.hpp"
 #include "BounceModule.hpp"
@@ -344,6 +345,7 @@ int App::run(const AppOptions& options) {
     modules_.push_back(std::make_unique<GpuNBodyModule>(PHYSICSLAB_SHADER_DIR));
     modules_.push_back(std::make_unique<WaveModule>());
     modules_.push_back(std::make_unique<StringModule>());
+    modules_.push_back(std::make_unique<DispersionModule>());
     activate(std::clamp(options.simulation - 1, 0, static_cast<int>(modules_.size()) - 1));
 
     using Clock = std::chrono::steady_clock;
