@@ -29,4 +29,14 @@ std::vector<Complex> dft(const std::vector<Complex>& x);
 // Le signal est complété par des zéros jusqu'à la prochaine puissance de 2. Renvoie n/2 + 1 valeurs, k = 0 .. n/2.
 std::vector<double> amplitudeSpectrum(const std::vector<double>& x);
 
+// Spectre d'amplitude avec fenêtre de Hann (réduit la fuite spectrale d'un enregistrement qui ne contient pas un nombre entier de
+// périodes), complété par des zéros jusqu'à `padding` fois la longueur (puissance de 2). Renvoie n/2 + 1 valeurs ; `binWidth` reçoit
+// la largeur d'une case en Hz (sampleRate / n_complété). L'amplitude d'une sinusoïde est atténuée d'environ 2 par la fenêtre :
+// utile pour la FORME et les positions des raies, pas pour leur hauteur absolue.
+std::vector<double> windowedSpectrum(const std::vector<double>& samples, double sampleRate, int padding, double* binWidth);
+
+// Fréquence [Hz] du pic spectral le plus haut dans [guess (1 - searchFraction), guess (1 + searchFraction)], par interpolation
+// parabolique du logarithme de l'amplitude autour du maximum (fenêtre de Hann, remplissage x4). Renvoie 0 s'il n'y a pas de pic.
+double peakFrequency(const std::vector<double>& samples, double sampleRate, double guess, double searchFraction = 0.25);
+
 }  // namespace pl::waves

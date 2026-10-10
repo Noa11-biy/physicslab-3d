@@ -90,4 +90,45 @@ std::vector<double> amplitudeSpectrum(const std::vector<double>& x) {
     return spectrum;
 }
 
+std::vector<double> windowedSpectrum(const std::vector<double>& samples, double sampleRate, int padding, double* binWidth) {
+    const std::size_t count = samples.size();
+    const std::size_t n = nextPowerOfTwo(count * static_cast<std::size_t>(std::max(padding, 1)));
+    double mean = 0.0;
+    for (double s : samples) mean += s;
+    if (count > 0) mean /= static_cast<double>(count);
+
+    std::vector<Complex> a(n, Complex(0.0, 0.0));
+    for (std::size_t i = 0; i < count; ++i) {
+        const double hann = count > 1 ? 0.5 * (1.0 - std::cos(2.0 * constants::pi * static_cast<double>(i) / static_cast<double>(count - 1))) : 1.0;
+        a[i] = (samples[i] - mean) * hann;
+    }
+    fft(a);
+
+    std::vector<double> spectrum(n / 2 + 1);
+    for (std::size_t k = 0; k <= n / 2; ++k) spectrum[k] = std::abs(a[k]);
+    if (binWidth) *binWidth = sampleRate / static_cast<double>(n);
+    return spectrum;
+}
+
+double peakFrequency(const std::vector<double>& samples, double sampleRate, double guess, double searchFraction) {
+    if (samples.size() < 8) return 0.0;
+    double df = 0.0;
+    const std::vector<double> s = windowedSpectrum(samples, sampleRate, 4, &df);
+    const double lo = guess * (1.0 - searchFraction), hi = guess * (1.0 + searchFraction);
+    std::size_t best = 0;
+    double bestValue = 0.0;
+    for (std::size_t k = 1; k + 1 < s.size(); ++k) {
+        const double f = static_cast<double>(k) * df;
+        if (f < lo || f > hi) continue;
+        if (s[k] > bestValue) { bestValue = s[k]; best = k; }
+    }
+    if (best == 0 || bestValue <= 0.0) return 0.0;
+
+    // parabole sur ln|X| en k - 1, k, k + 1 : le sommet est décalé de delta cases
+    const double alpha = std::log(std::max(s[best - 1], 1e-300)), beta = std::log(bestValue), gamma = std::log(std::max(s[best + 1], 1e-300));
+    const double denom = alpha - 2.0 * beta + gamma;
+    const double delta = denom != 0.0 ? 0.5 * (alpha - gamma) / denom : 0.0;
+    return (static_cast<double>(best) + delta) * df;
+}
+
 }  // namespace pl::waves
