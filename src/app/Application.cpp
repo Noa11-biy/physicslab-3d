@@ -31,6 +31,7 @@
 #include "PendulumModule.hpp"
 #include "ProjectileModule.hpp"
 #include "SimulationModule.hpp"
+#include "StringModule.hpp"
 #include "WaveModule.hpp"
 #include "physicslab/core/Level.hpp"
 #include "physicslab/render/Camera.hpp"
@@ -342,6 +343,7 @@ int App::run(const AppOptions& options) {
     modules_.push_back(std::make_unique<RigidBodyModule>());
     modules_.push_back(std::make_unique<GpuNBodyModule>(PHYSICSLAB_SHADER_DIR));
     modules_.push_back(std::make_unique<WaveModule>());
+    modules_.push_back(std::make_unique<StringModule>());
     activate(std::clamp(options.simulation - 1, 0, static_cast<int>(modules_.size()) - 1));
 
     using Clock = std::chrono::steady_clock;
