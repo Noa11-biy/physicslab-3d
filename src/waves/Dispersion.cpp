@@ -38,6 +38,24 @@ double phaseRatio2D(double x, double theta, double cfl) {
     return phaseFromS(cfl, std::sqrt(sx * sx + sy * sy), x);
 }
 
+double omegaDt2D(double kxdx, double kydx, double cfl) {
+    const double sx = std::sin(0.5 * kxdx), sy = std::sin(0.5 * kydx);
+    const double arg = cfl * std::sqrt(sx * sx + sy * sy);
+    return arg > 1.0 ? kNaN : 2.0 * std::asin(arg);
+}
+
+void groupVelocity2D(double kxdx, double kydx, double cfl, double& vx, double& vy) {
+    const double sx = std::sin(0.5 * kxdx), sy = std::sin(0.5 * kydx);
+    const double s = std::sqrt(sx * sx + sy * sy), arg = cfl * s;
+    if (s == 0.0 || arg >= 1.0) {
+        vx = vy = arg >= 1.0 ? kNaN : 0.0;
+        return;
+    }
+    const double common = 1.0 / (s * std::sqrt(1.0 - arg * arg));
+    vx = sx * std::cos(0.5 * kxdx) * common;
+    vy = sy * std::cos(0.5 * kydx) * common;
+}
+
 double growthPerStep1D(double x, double cfl) {
     const double s = std::sin(0.5 * x);
     return growthFromS2(cfl, s * s);

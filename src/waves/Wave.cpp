@@ -130,7 +130,6 @@ double Wave1D::maxAbs() const {
 Wave2D::Wave2D(const Wave2DParams& params) : p_(params) {
     assert(p_.cellsX >= 2 && p_.cellsY >= 2 && p_.dx > 0.0 && p_.speed > 0.0 && p_.cfl > 0.0);
     p_.spongeCells = std::clamp(p_.spongeCells, 1, std::min(p_.cellsX, p_.cellsY) / 2);
-    dt_ = p_.cfl * p_.dx / p_.speed;
 
     const std::size_t count = static_cast<std::size_t>(pointsX()) * static_cast<std::size_t>(pointsY());
     prev_.assign(count, 0.0);
@@ -138,8 +137,29 @@ Wave2D::Wave2D(const Wave2DParams& params) : p_(params) {
     next_.assign(count, 0.0);
     sigma_.assign(count, 0.0);
 
+    // Vitesse en chaque noeud ; dt est fixé par la vitesse maximale.
+    assert(p_.speedField.empty() || p_.speedField.size() == count);
+    std::vector<double> speed(count, p_.speed);
+    if (!p_.speedField.empty()) speed = p_.speedField;
+    cMax_ = *std::max_element(speed.begin(), speed.end());
+    assert(cMax_ > 0.0);
+    dt_ = p_.cfl * p_.dx / cMax_;
+    ratio_ = dt_ * dt_ / (p_.dx * p_.dx);
+
+    // Coefficients des faces : (dt² / dx²) fois la moyenne arithmétique des c² des deux noeuds (c = vitesse uniforme : C²).
+    kx_.assign(count, 0.0);
+    ky_.assign(count, 0.0);
+    const int stride = p_.cellsX + 1;
+    for (int j = 0; j <= p_.cellsY; ++j)
+        for (int i = 0; i <= p_.cellsX; ++i) {
+            const int k = index(i, j);
+            const double c2 = speed[k] * speed[k];
+            if (i < p_.cellsX) kx_[k] = ratio_ * 0.5 * (c2 + speed[k + 1] * speed[k + 1]);
+            if (j < p_.cellsY) ky_[k] = ratio_ * 0.5 * (c2 + speed[k + stride] * speed[k + stride]);
+        }
+
     // Amortissement additif : sigma(x, y) = sigma_x(x) + sigma_y(y). Aux coins les deux couches se cumulent.
-    const double sigmaMax = spongeSigmaMax(p_.speed, p_.spongeCells * p_.dx, p_.spongeReflection, p_.spongeOrder);
+    const double sigmaMax = spongeSigmaMax(cMax_, p_.spongeCells * p_.dx, p_.spongeReflection, p_.spongeOrder);
     const int order = p_.spongeOrder;
     for (int j = 0; j <= p_.cellsY; ++j) {
         for (int i = 0; i <= p_.cellsX; ++i) {
@@ -153,16 +173,24 @@ Wave2D::Wave2D(const Wave2DParams& params) : p_(params) {
     }
 }
 
-double Wave2D::laplacian(const std::vector<double>& f, int i, int j) const {
+std::vector<double> Wave2D::makeSpeedField(const Wave2DParams& g, const std::function<double(double, double)>& c) {
+    std::vector<double> field(static_cast<std::size_t>(g.cellsX + 1) * static_cast<std::size_t>(g.cellsY + 1));
+    for (int j = 0; j <= g.cellsY; ++j)
+        for (int i = 0; i <= g.cellsX; ++i) field[static_cast<std::size_t>(j) * (g.cellsX + 1) + i] = c(i * g.dx, j * g.dx);
+    return field;
+}
+
+double Wave2D::weightedLaplacian(const std::vector<double>& f, int i, int j) const {
     const int nx = p_.cellsX, ny = p_.cellsY, stride = nx + 1;
     const int k = index(i, j);
     const double c = f[k];
-    // Voisin au-delà du bord : point fantôme symétrique si le bord est libre ; sinon 0 (jamais utilisé : le nœud du bord est fixe).
-    const double west = i > 0 ? f[k - 1] : (p_.left == Edge::Free ? f[k + 1] : 0.0);
-    const double east = i < nx ? f[k + 1] : (p_.right == Edge::Free ? f[k - 1] : 0.0);
-    const double south = j > 0 ? f[k - stride] : (p_.bottom == Edge::Free ? f[k + stride] : 0.0);
-    const double north = j < ny ? f[k + stride] : (p_.top == Edge::Free ? f[k - stride] : 0.0);
-    return west + east + south + north - 4.0 * c;
+    // Flux de chaque face. Au-delà d'un bord libre : point fantôme symétrique, donc face symétrique (même coefficient, valeur opposée) ;
+    // sur un bord fixe le noeud n'est jamais mis à jour (flux inutilisé).
+    const double west = i > 0 ? kx_[k - 1] * (f[k - 1] - c) : (p_.left == Edge::Free ? kx_[k] * (f[k + 1] - c) : 0.0);
+    const double east = i < nx ? kx_[k] * (f[k + 1] - c) : (p_.right == Edge::Free ? kx_[k - 1] * (f[k - 1] - c) : 0.0);
+    const double south = j > 0 ? ky_[k - stride] * (f[k - stride] - c) : (p_.bottom == Edge::Free ? ky_[k] * (f[k + stride] - c) : 0.0);
+    const double north = j < ny ? ky_[k] * (f[k + stride] - c) : (p_.top == Edge::Free ? ky_[k - stride] * (f[k - stride] - c) : 0.0);
+    return west + east + south + north;
 }
 
 void Wave2D::clampBoundaries(std::vector<double>& f) const {
@@ -179,7 +207,6 @@ void Wave2D::clampBoundaries(std::vector<double>& f) const {
 
 void Wave2D::setInitial(const std::function<double(double, double)>& u0, const std::function<double(double, double)>& v0) {
     const int nx = p_.cellsX, ny = p_.cellsY;
-    const double c2 = p_.cfl * p_.cfl;
     std::vector<double> v(cur_.size(), 0.0);
     for (int j = 0; j <= ny; ++j) {
         for (int i = 0; i <= nx; ++i) {
@@ -194,16 +221,28 @@ void Wave2D::setInitial(const std::function<double(double, double)>& u0, const s
     for (int j = 0; j <= ny; ++j) {
         for (int i = 0; i <= nx; ++i) {
             const int k = index(i, j);
-            prev_[k] = cur_[k] - dt_ * v[k] + 0.5 * c2 * laplacian(cur_, i, j) - sigma_[k] * dt_ * dt_ * v[k];
+            prev_[k] = cur_[k] - dt_ * v[k] + 0.5 * weightedLaplacian(cur_, i, j) - sigma_[k] * dt_ * dt_ * v[k];
         }
     }
     clampBoundaries(prev_);
     steps_ = 0;
 }
 
+void Wave2D::setStates(const std::function<double(double, double)>& previous, const std::function<double(double, double)>& current) {
+    for (int j = 0; j <= p_.cellsY; ++j) {
+        for (int i = 0; i <= p_.cellsX; ++i) {
+            const double x = i * p_.dx, y = j * p_.dx;
+            prev_[index(i, j)] = previous(x, y);
+            cur_[index(i, j)] = current(x, y);
+        }
+    }
+    clampBoundaries(prev_);
+    clampBoundaries(cur_);
+    steps_ = 0;
+}
+
 void Wave2D::step() {
     const int nx = p_.cellsX, ny = p_.cellsY;
-    const double c2 = p_.cfl * p_.cfl;
     for (int j = 0; j <= ny; ++j) {
         const bool rowFixed = (j == 0 && p_.bottom != Edge::Free) || (j == ny && p_.top != Edge::Free);
         for (int i = 0; i <= nx; ++i) {
@@ -213,8 +252,20 @@ void Wave2D::step() {
                 continue;
             }
             const double s = sigma_[k] * dt_;
-            next_[k] = (2.0 * cur_[k] - (1.0 - s) * prev_[k] + c2 * laplacian(cur_, i, j)) / (1.0 + s);
+            next_[k] = (2.0 * cur_[k] - (1.0 - s) * prev_[k] + weightedLaplacian(cur_, i, j)) / (1.0 + s);
         }
+    }
+    // sources : force A sin(w t) ramp(t) au noeud le plus proche (jamais sur un bord fixe)
+    const double t = steps_ * dt_;
+    for (const PointSource& src : sources_) {
+        const int i = std::clamp(static_cast<int>(std::lround(src.x / p_.dx)), 0, nx), j = std::clamp(static_cast<int>(std::lround(src.y / p_.dx)), 0, ny);
+        const bool fixedNode = (i == 0 && p_.left != Edge::Free) || (i == nx && p_.right != Edge::Free) || (j == 0 && p_.bottom != Edge::Free) ||
+                               (j == ny && p_.top != Edge::Free);
+        if (fixedNode) continue;
+        const double period = 6.283185307179586 / src.omega;
+        const double r = src.rampPeriods > 0.0 ? std::min(1.0, t / (src.rampPeriods * period)) : 1.0;
+        const double ramp = std::sin(0.5 * 3.14159265358979323846 * r) * std::sin(0.5 * 3.14159265358979323846 * r);
+        next_[index(i, j)] += ratio_ * src.amplitude * ramp * std::sin(src.omega * t);
     }
     prev_.swap(next_);
     prev_.swap(cur_);
@@ -235,19 +286,20 @@ double Wave2D::energy() const {
         }
     }
     // Arêtes horizontales (largeur transverse dx w_j) et verticales (dx w_i) : produit des différences nouvelle × ancienne.
+    // c²_face = coefficient du schéma / (dt² / dx²) : la même moyenne que dans le schéma, sans quoi l'énergie ne serait plus conservée exactement.
     double potential = 0.0;
     for (int j = 0; j <= ny; ++j)
         for (int i = 0; i < nx; ++i) {
             const int k = index(i, j);
-            potential += weight(j, ny) * (cur_[k + 1] - cur_[k]) * (prev_[k + 1] - prev_[k]);
+            potential += weight(j, ny) * (kx_[k] / ratio_) * (cur_[k + 1] - cur_[k]) * (prev_[k + 1] - prev_[k]);
         }
     const int stride = nx + 1;
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i <= nx; ++i) {
             const int k = index(i, j);
-            potential += weight(i, nx) * (cur_[k + stride] - cur_[k]) * (prev_[k + stride] - prev_[k]);
+            potential += weight(i, nx) * (ky_[k] / ratio_) * (cur_[k + stride] - cur_[k]) * (prev_[k + stride] - prev_[k]);
         }
-    return 0.5 * kinetic + 0.5 * p_.speed * p_.speed * potential;
+    return 0.5 * kinetic + 0.5 * potential;
 }
 
 double Wave2D::maxAbs() const {

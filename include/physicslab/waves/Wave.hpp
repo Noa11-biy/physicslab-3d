@@ -92,11 +92,26 @@ struct Wave2DParams {
     int spongeCells = 30;
     double spongeReflection = 0.03;
     int spongeOrder = 1;
+    // Vitesse c(i, j) en chaque noeud (taille (cellsX + 1)(cellsY + 1), rangée comme les champs) : vide = vitesse uniforme `speed`. Un milieu
+    // à vitesse variable est un milieu d'indice n = c0 / c(x, y) (cuve à ondes de profondeur variable) : réfraction de Snell-Descartes.
+    std::vector<double> speedField;
+};
+
+// Source ponctuelle sinusoïdale : u_tt = ... + A sin(w t) ramp(t) delta(x - xs), « douce » (montée en sin² sur `rampPeriods` périodes) pour ne pas
+// lancer de transitoire large bande. Numériquement : u^{n+1}[noeud] += (dt² / dx²) A sin(w t^n) ramp.
+struct PointSource {
+    double x = 0.0, y = 0.0;     // position [m] (arrondie au noeud le plus proche)
+    double amplitude = 1.0;      // A
+    double omega = 6.283185307179586;  // pulsation [rad/s]
+    double rampPeriods = 2.0;
 };
 
 class Wave2D {
 public:
     explicit Wave2D(const Wave2DParams& params);
+
+    // Vitesse c(x, y) en chaque noeud à partir d'une fonction (taille (cellsX + 1)(cellsY + 1), à passer dans Wave2DParams::speedField).
+    static std::vector<double> makeSpeedField(const Wave2DParams& geometry, const std::function<double(double, double)>& c);
 
     const Wave2DParams& params() const { return p_; }
     double dx() const { return p_.dx; }
@@ -107,30 +122,45 @@ public:
     long long steps() const { return steps_; }
     double time() const { return steps_ * dt_; }
     static constexpr double kCflLimit = 0.70710678118654752440;  // 1/sqrt(2)
+    // Le nombre de Courant est rapporté à la vitesse MAXIMALE du milieu (c'est elle qui fixe dt).
+    double speedMax() const { return cMax_; }
     bool stable() const { return p_.cfl <= kCflLimit + 1e-12; }
 
     const std::vector<double>& u() const { return cur_; }
     const std::vector<double>& uPrevious() const { return prev_; }
     double sigma(int i, int j) const { return sigma_[index(i, j)]; }
+    // Coefficients du schéma, repris tels quels par le calcul GPU : kx[k] = (dt² / dx²) c²_face entre les noeuds k et k + 1 (de même ky entre k et
+    // k + (cellsX + 1)), avec c²_face = moyenne arithmétique des c² des deux noeuds ; sigmaField() : amortissement de l'éponge en chaque noeud.
+    const std::vector<double>& coefficientX() const { return kx_; }
+    const std::vector<double>& coefficientY() const { return ky_; }
+    const std::vector<double>& sigmaField() const { return sigma_; }
 
     void setInitial(const std::function<double(double, double)>& u0, const std::function<double(double, double)>& v0 = {});
+    // Deux niveaux de temps imposés (voir Wave1D::setStates) : un paquet purement progressif cohérent avec la grille.
+    void setStates(const std::function<double(double, double)>& previous, const std::function<double(double, double)>& current);
+
+    void clearSources() { sources_.clear(); }
+    void addSource(const PointSource& s) { sources_.push_back(s); }
+    const std::vector<PointSource>& sources() const { return sources_; }
 
     void step();
     void advance(long long n) { for (long long k = 0; k < n; ++k) step(); }
 
-    // Même énergie discrète conservée qu'en 1D (poids ½ sur les bords, ¼ aux coins).
+    // Même énergie discrète conservée qu'en 1D (poids ½ sur les bords, ¼ aux coins), pour l'équation u_tt = div(c² grad u) : le potentiel est
+    // ½ sum c²_face (Du^n)(Du^{n-1}) avec la même c²_face que le schéma, donc conservée exactement aussi quand c varie (sans éponge ni source).
     double energy() const;
     double maxAbs() const;
 
 private:
-    // Laplacien discret (sans 1/dx²) de f au point (i, j) : 5 points, avec point fantôme symétrique sur un bord libre.
-    double laplacian(const std::vector<double>& f, int i, int j) const;
+    // Divergence discrète (c² grad u) dt² / dx² au noeud (i, j), avec point fantôme symétrique sur un bord libre : remplace C² * laplacien.
+    double weightedLaplacian(const std::vector<double>& f, int i, int j) const;
     void clampBoundaries(std::vector<double>& f) const;
 
     Wave2DParams p_;
-    double dt_;
+    double dt_ = 0.0, cMax_ = 0.0, ratio_ = 0.0;  // ratio_ = dt² / dx²
     long long steps_ = 0;
-    std::vector<double> prev_, cur_, next_, sigma_;
+    std::vector<double> prev_, cur_, next_, sigma_, kx_, ky_;
+    std::vector<PointSource> sources_;
 };
 
 }  // namespace pl::waves

@@ -30,6 +30,14 @@ double groupRatio1D(double x, double cfl);
 // Elle dépend de theta : la grille est ANISOTROPE (en x ou y, comme 1D ; sur la diagonale, plus lente aux courtes longueurs d'onde).
 double phaseRatio2D(double x, double theta, double cfl);
 
+// 2D : phase par pas w dt = 2 asin(C S), S = sqrt(sin²(kx dx / 2) + sin²(ky dx / 2)), pour les phases par case (kx dx, ky dx) ; NaN si C S > 1.
+double omegaDt2D(double kxdx, double kydx, double cfl);
+
+// Vitesse de GROUPE de la grille 2D, en unités de c : (vx, vy) = grad_k w / c = (sx cos(kx dx / 2), sy cos(ky dx / 2)) / (S sqrt(1 - C² S²)), avec sx = sin(kx dx / 2)...
+// C'est la direction et la vitesse d'un faisceau (paquet d'ondes) : elle diffère de celles de l'onde (vecteur d'onde, vitesse de phase) dès que la grille est
+// anisotrope, donc la réfraction d'un faisceau suit la loi de Snell de la GRILLE (conservation de w et de ky, relation de dispersion discrète), pas celle du continu.
+void groupVelocity2D(double kxdx, double kydx, double cfl, double& vx, double& vy);
+
 // Facteur de croissance par pas |lambda| >= 1 du mode (kx dx, ky dx) ; 1 si le mode est stable. 1D : ky dx = 0 et s² = sin²(kx dx / 2).
 double growthPerStep1D(double x, double cfl);
 double growthPerStep2D(double kxdx, double kydx, double cfl);

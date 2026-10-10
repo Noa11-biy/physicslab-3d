@@ -780,6 +780,18 @@ void testDispersionFormulas() {
         // à C = 1/sqrt(2) la grille 2D est exacte (à l'ordre dominant) EN DIAGONALE
         CHECK_NEAR(dsp::phaseRatio2D(x, dsp::kPi / 4.0, dsp::cflLimit(2)), 1.0, 1e-7);
     }
+    // vitesse de groupe 2D = gradient de w : différences finies de omegaDt2D (v_g / c = d(w dt) / d(k dx) / C)
+    for (double cfl : {0.3, 0.6}) {
+        for (double a : {0.4, 1.3}) {
+            for (double b : {0.2, 0.9}) {
+                const double h = 1e-6;
+                double vx, vy;
+                dsp::groupVelocity2D(a, b, cfl, vx, vy);
+                CHECK_NEAR(vx, (dsp::omegaDt2D(a + h, b, cfl) - dsp::omegaDt2D(a - h, b, cfl)) / (2.0 * h) / cfl, 1e-7);
+                CHECK_NEAR(vy, (dsp::omegaDt2D(a, b + h, cfl) - dsp::omegaDt2D(a, b - h, cfl)) / (2.0 * h) / cfl, 1e-7);
+            }
+        }
+    }
     // croissance : 1 si stable, sinon (C + sqrt(C² - 1))² pour le mode de Nyquist en 1D
     CHECK_NEAR(dsp::growthPerStep1D(2.0, 1.0), 1.0, 0.0);
     {
@@ -991,6 +1003,279 @@ void testDispersionErrorConstant() {
                 e02, e05, e09, e099, e1, r02, 0.96 / 0.75, r09, 0.19 / 0.75, r099, 0.0199 / 0.75);
 }
 
+// ------------------------------------ cuve à ondes, milieu variable (O3) ----
+
+void testVariableSpeedEnergy() {
+    struct Case { Edge e; const char* name; };
+    for (const Case& c : {Case{Edge::Fixed, "4 murs"}, Case{Edge::Free, "4 bords libres"}}) {
+        Wave2DParams p;
+        p.cellsX = 48;
+        p.cellsY = 36;
+        p.dx = 0.05;
+        p.cfl = 0.6;
+        p.left = p.right = p.bottom = p.top = c.e;
+        p.speedField = Wave2D::makeSpeedField(p, [](double x, double y) { return 1.0 + 0.4 * std::sin(3.0 * x) * std::cos(2.0 * y) + (x > 1.2 ? 0.3 : 0.0); });
+        Wave2D w(p);
+        Lcg rng;
+        std::vector<double> noise(w.u().size()), vel(w.u().size());
+        for (double& v : noise) v = rng.next();
+        for (double& v : vel) v = rng.next();
+        auto at = [&](const std::vector<double>& a, double x, double y) {
+            return a[w.index(static_cast<int>(std::lround(x / p.dx)), static_cast<int>(std::lround(y / p.dx)))];
+        };
+        w.setInitial([&](double x, double y) { return at(noise, x, y); }, [&](double x, double y) { return at(vel, x, y); });
+        const double e0 = w.energy();
+        double drift = 0.0;
+        for (int k = 0; k < 1500; ++k) {
+            w.step();
+            drift = std::max(drift, std::abs(w.energy() - e0) / e0);
+        }
+        CHECK(drift <= 1e-12);
+        std::printf("  energie 2D, c(x, y) variable (de %.2f a %.2f), %-15s : derive relative max %.1e sur 1500 pas\n",
+                    *std::min_element(p.speedField.begin(), p.speedField.end()), w.speedMax(), c.name, drift);
+    }
+}
+
+void testSpeedFieldUniform() {
+    Wave2DParams p;
+    p.cellsX = 60;
+    p.cellsY = 40;
+    p.dx = 0.05;
+    p.cfl = 0.6;
+    p.speed = 1.3;
+    Wave2D a(p);
+    Wave2DParams q = p;
+    q.speedField.assign(static_cast<std::size_t>(61) * 41, 1.3);
+    Wave2D b(q);
+    const auto bump = [](double x, double y) { return std::exp(-((x - 1.0) * (x - 1.0) + (y - 0.8) * (y - 0.8)) / 0.02); };
+    a.setInitial(bump);
+    b.setInitial(bump);
+    a.advance(300);
+    b.advance(300);
+    double diff = 0.0;
+    for (std::size_t i = 0; i < a.u().size(); ++i) diff = std::max(diff, std::abs(a.u()[i] - b.u()[i]));
+    CHECK(diff <= 1e-14);
+    std::printf("  champ de vitesse uniforme = vitesse uniforme : ecart %.1e apres 300 pas\n", diff);
+}
+
+// Énergie ½ (u_t² + c² |grad u|²) dans la zone x_min <= x < x_max (différences centrées en espace, arrière en temps).
+double regionEnergy(const Wave2D& w, double xmin, double xmax) {
+    const int nx = w.pointsX(), ny = w.pointsY();
+    const double dx = w.dx();
+    double sum = 0.0;
+    for (int j = 1; j + 1 < ny; ++j)
+        for (int i = 1; i + 1 < nx; ++i) {
+            const double x = i * dx;
+            if (x < xmin || x >= xmax) continue;
+            const int k = w.index(i, j);
+            const double v = (w.u()[k] - w.uPrevious()[k]) / w.dt();
+            const double ux = (w.u()[k + 1] - w.u()[k - 1]) / (2.0 * dx), uy = (w.u()[k + nx] - w.u()[k - nx]) / (2.0 * dx);
+            const double c = w.params().speedField.empty() ? w.params().speed : w.params().speedField[k];
+            sum += 0.5 * (v * v + c * c * (ux * ux + uy * uy)) * dx * dx;
+        }
+    return sum;
+}
+
+// Centre de Σ x u² (et y) dans la zone x_min <= x < x_max.
+void regionCentroid(const Wave2D& w, double xmin, double xmax, double& cx, double& cy) {
+    double s = 0.0, sx = 0.0, sy = 0.0;
+    for (int j = 0; j < w.pointsY(); ++j)
+        for (int i = 0; i < w.pointsX(); ++i) {
+            const double x = i * w.dx(), y = j * w.dx();
+            if (x < xmin || x >= xmax) continue;
+            const double u2 = w.u()[w.index(i, j)] * w.u()[w.index(i, j)];
+            s += u2;
+            sx += x * u2;
+            sy += y * u2;
+        }
+    cx = s > 0.0 ? sx / s : 0.0;
+    cy = s > 0.0 ? sy / s : 0.0;
+}
+
+struct RefractionResult {
+    double reflectedAngle = 0.0, transmittedAngle = 0.0;  // degrés, par rapport à la normale de l'interface
+    double reflectedFraction = 0.0, transmittedFraction = 0.0;
+};
+
+// Un paquet d'ondes plan (longueur d'onde 0,5 m, enveloppe gaussienne de 0,5 m) arrive à l'angle theta1 sur l'interface verticale x = 7 entre un milieu
+// de vitesse c1 (à gauche) et c2 (à droite). On mesure les angles de sortie par le déplacement du centre des paquets réfléchi et transmis, et la
+// part d'énergie de chacun.
+RefractionResult runRefraction(double theta1Deg, double c1, double c2) {
+    Wave2DParams p;
+    p.cellsX = 300;
+    p.cellsY = 240;
+    p.dx = 0.05;  // 10 cases par longueur d'onde
+    p.cfl = 0.5;
+    p.left = p.right = p.bottom = p.top = Edge::Absorbing;
+    p.spongeCells = 20;  // 1 m
+    const double xi = 7.0;
+    p.speedField = Wave2D::makeSpeedField(p, [&](double x, double) { return x < xi ? c1 : c2; });
+    Wave2D w(p);
+
+    const double th = theta1Deg * pi / 180.0, nxv = std::cos(th), nyv = std::sin(th);
+    const double lambda = 0.5, k = 2.0 * pi / lambda, sigma = 0.5, d = 2.0;  // d : distance du centre du paquet à l'interface (4 largeurs)
+    const double x0 = xi - d, y0 = 6.0 - d * std::tan(th);
+    const auto env = [&](double dx, double dy) { return std::exp(-0.5 * (dx * dx + dy * dy) / (sigma * sigma)); };
+    w.setStates(
+        [&](double x, double y) { return env(x - x0 + c1 * nxv * w.dt(), y - y0 + c1 * nyv * w.dt()) * std::cos(k * ((x - x0) * nxv + (y - y0) * nyv) + c1 * k * w.dt()); },
+        [&](double x, double y) { return env(x - x0, y - y0) * std::cos(k * ((x - x0) * nxv + (y - y0) * nyv)); });
+
+    // Le paquet a une longueur de 4 largeurs (2 m) de chaque côté de son centre : sa queue, d'étendue 2 cos(theta) en x, a fini de franchir l'interface
+    // (ou de s'en éloigner) après 2 / c. Au-delà, la zone x > xi ne contient QUE le paquet transmis et x < xi QUE le réfléchi : on y mesure le centre
+    // sans masque coupant la queue (un masque à xi + 0.7 m biaisait l'angle de +1.5 degré : le biais décroît quand le paquet s'éloigne).
+    const double hit = d / (c1 * nxv);  // instant où le centre du paquet atteint l'interface
+    const double tr1 = hit + 2.0 / c2 + 0.6, tr2 = tr1 + 2.0, rf1 = hit + 2.0 / c1 + 0.6, rf2 = rf1 + 2.0;  // instants de mesure (transmis, réfléchi)
+    double txa = 0, tya = 0, txb = 0, tyb = 0, rxa = 0, rya = 0, rxb = 0, ryb = 0;
+    const long long total = std::lround(std::max(tr2, rf2) / w.dt());
+    for (long long n = 0; n < total; ++n) {
+        w.step();
+        const double t = w.time();
+        if (std::abs(t - rf1) < 0.5 * w.dt()) regionCentroid(w, 0.0, xi - 0.05, rxa, rya);
+        if (std::abs(t - rf2) < 0.5 * w.dt()) regionCentroid(w, 0.0, xi - 0.05, rxb, ryb);
+        if (std::abs(t - tr1) < 0.5 * w.dt()) regionCentroid(w, xi + 0.05, 100.0, txa, tya);
+        if (std::abs(t - tr2) < 0.5 * w.dt()) regionCentroid(w, xi + 0.05, 100.0, txb, tyb);
+    }
+
+    RefractionResult r;
+    r.reflectedAngle = std::atan2(ryb - rya, -(rxb - rxa)) * 180.0 / pi;
+    r.transmittedAngle = std::atan2(tyb - tya, txb - txa) * 180.0 / pi;
+    // la zone transmise commence à 1 m de l'interface : l'onde évanescente d'une réflexion totale y est négligeable (exp(-2 kappa x) ~ 2e-5) mais pas à 0,3 m
+    const double eL = regionEnergy(w, 0.0, xi - 0.3), eR = regionEnergy(w, xi + 1.0, 100.0);
+    r.reflectedFraction = eL / (eL + eR);
+    r.transmittedFraction = eR / (eL + eR);
+    return r;
+}
+
+// Prédiction pour un PAQUET de nombre d'onde moyen k0 = 2 pi / lambda et d'enveloppe gaussienne de largeur sigma, arrivant à l'angle theta1.
+// Chaque composante de Fourier (kx, ky), d'énergie ∝ w² exp(-sigma² |k - k0|²), suit la loi de Snell DE LA GRILLE : w et ky se conservent, la relation de
+// dispersion discrète donne kx dans le second milieu (pas de solution : réflexion totale), le coefficient de réflexion en amplitude est
+// R = (c1² kx1 - c2² kx2) / (c1² kx1 + c2² kx2) (continuité de u et de c² du/dx), et le faisceau suit la vitesse de groupe discrète (dispersion::groupVelocity2D).
+// Le centre d'un paquet (réfléchi ou transmis) avance à la moyenne, pondérée par l'énergie de chaque composante, de leurs vitesses de groupe.
+struct PacketPrediction {
+    double reflectedAngle = 0.0, transmittedAngle = 0.0;       // degrés par rapport à la normale (direction moyenne des centres)
+    double reflectedFraction = 0.0, transmittedFraction = 0.0;
+};
+PacketPrediction predictPacket(double theta1Deg, double c1, double c2, double dx, double dt, double lambda, double sigma) {
+    const double th = theta1Deg * pi / 180.0, k0 = 2.0 * pi / lambda;
+    const double cfl1 = c1 * dt / dx, cfl2 = c2 * dt / dx;
+    const double span = 4.0 / sigma;
+    const int n = 60;
+    double wsum = 0.0, wr = 0.0, wt = 0.0, rx = 0.0, ry = 0.0, tx = 0.0, ty = 0.0;
+    for (int ix = -n; ix <= n; ++ix) {
+        for (int iy = -n; iy <= n; ++iy) {
+            const double kx = k0 * std::cos(th) + span * ix / n, ky = k0 * std::sin(th) + span * iy / n;
+            if (kx <= 0.0) continue;  // composante qui s'éloigne de l'interface
+            const double a = kx * dx, b = ky * dx;
+            const double sb = std::sin(0.5 * b), s1 = std::sqrt(std::sin(0.5 * a) * std::sin(0.5 * a) + sb * sb);
+            if (cfl1 * s1 >= 1.0) continue;
+            const double w = cfl1 * s1;  // sin(w dt / 2)
+            const double weight = w * w * std::exp(-sigma * sigma * ((kx - k0 * std::cos(th)) * (kx - k0 * std::cos(th)) + (ky - k0 * std::sin(th)) * (ky - k0 * std::sin(th))));
+            double v1x, v1y;
+            dsp::groupVelocity2D(a, b, cfl1, v1x, v1y);
+            wsum += weight;
+            const double sx2sq = (w / cfl2) * (w / cfl2) - sb * sb;
+            double r2 = 1.0, v2x = 0.0, v2y = 0.0;
+            if (sx2sq > 0.0 && sx2sq < 1.0) {
+                const double a2 = 2.0 * std::asin(std::sqrt(sx2sq)), kx2 = a2 / dx;
+                const double rr = (c1 * c1 * kx - c2 * c2 * kx2) / (c1 * c1 * kx + c2 * c2 * kx2);
+                r2 = rr * rr;
+                dsp::groupVelocity2D(a2, b, cfl2, v2x, v2y);
+            }
+            wr += weight * r2;
+            rx += weight * r2 * v1x;
+            ry += weight * r2 * v1y;
+            wt += weight * (1.0 - r2);
+            tx += weight * (1.0 - r2) * v2x;
+            ty += weight * (1.0 - r2) * v2y;
+        }
+    }
+    PacketPrediction p;
+    p.reflectedFraction = wr / wsum;
+    p.transmittedFraction = wt / wsum;
+    p.reflectedAngle = std::atan2(ry, rx) * 180.0 / pi;  // le réfléchi a vx opposé : l'angle par rapport à la normale est celui de (|vx|, vy)
+    p.transmittedAngle = wt > 0.0 ? std::atan2(ty, tx) * 180.0 / pi : 0.0;
+    return p;
+}
+
+void testRefraction() {
+    struct Case { double theta, c1, c2; };
+    // dt de la grille : C = 0,5 pour la vitesse maximale, dx = 0,05 m
+    const double dx = 0.05;
+    std::printf("  refraction d'un paquet (10 cases par longueur d'onde, enveloppe 0.5 m) : angles des FAISCEAUX (degres, par rapport a la normale)\n"
+                "    theta1  c1    c2  | reflechi mesure prevu | transmis mesure prevu  Snell continu | R energie mesure prevu(paquet) Fresnel plan | T mesure prevu\n");
+    for (const Case& c : {Case{20.0, 1.0, 0.7}, Case{40.0, 1.0, 0.7}, Case{30.0, 0.7, 1.0}, Case{55.0, 0.7, 1.0}}) {
+        const RefractionResult r = runRefraction(c.theta, c.c1, c.c2);
+        const double dt = 0.5 * dx / std::max(c.c1, c.c2);
+        const PacketPrediction g = predictPacket(c.theta, c.c1, c.c2, dx, dt, 0.5, 0.5);
+        const double th1 = c.theta * pi / 180.0, s2 = c.c2 / c.c1 * std::sin(th1);
+        const bool total = s2 >= 1.0;
+        const double th2 = total ? 0.0 : std::asin(s2);
+        // Fresnel d'une onde plane (continu) : R = (c1 cos th1 - c2 cos th2) / (c1 cos th1 + c2 cos th2) ; au-delà de l'angle critique |R| = 1
+        double r2 = 1.0;
+        if (!total) {
+            const double rc = (c.c1 * std::cos(th1) - c.c2 * std::cos(th2)) / (c.c1 * std::cos(th1) + c.c2 * std::cos(th2));
+            r2 = rc * rc;
+        }
+        // faisceau transmis (s'il porte au moins la moitié de l'énergie) : la loi de la GRILLE, à 0,5 degré ; celle du continu se trompe de 1,5 degré
+        if (g.transmittedFraction > 0.5) {
+            CHECK(std::abs(r.transmittedAngle - g.transmittedAngle) <= 0.5);
+            CHECK(std::abs(r.transmittedAngle - g.transmittedAngle) < std::abs(r.transmittedAngle - th2 * 180.0 / pi));
+        }
+        // faisceau réfléchi : un faisceau de 1 % d'énergie n'a pas de centre fiable ; en réflexion totale (R = 0,97) la prédiction est moins précise
+        // près de l'angle critique (0,9 degré, 1,3 % d'énergie : le coefficient de Fresnel du continu est appliqué à chaque composante, interface d'une case)
+        if (g.reflectedFraction > 0.5) CHECK(std::abs(r.reflectedAngle - g.reflectedAngle) <= 1.0);
+        CHECK(std::abs(r.reflectedFraction - g.reflectedFraction) <= 0.02);
+        CHECK(std::abs(r.transmittedFraction - g.transmittedFraction) <= 0.02);
+        if (total) CHECK(r.transmittedFraction <= 0.05);  // « réflexion totale » d'un paquet : il reste quelques % transmis (spectre angulaire sous l'angle critique)
+        std::printf("    %4.0f   %.1f   %.1f |   %6.2f  %6.2f   |   %6.2f  %6.2f   %6.2f      |  %.4f   %.4f        %.4f     | %.4f  %.4f\n", c.theta, c.c1, c.c2,
+                    r.reflectedAngle, g.reflectedAngle, r.transmittedAngle, g.transmittedAngle, total ? NAN : th2 * 180.0 / pi,
+                    r.reflectedFraction, g.reflectedFraction, r2, r.transmittedFraction, g.transmittedFraction);
+    }
+}
+
+// Source ponctuelle sinusoïdale : en 2D l'amplitude décroît comme |H0(k r)|, soit 1 / sqrt(r) loin de la source.
+void testPointSourceAmplitude() {
+    Wave2DParams p;
+    p.cellsX = p.cellsY = 256;
+    p.dx = 1.0 / 32.0;  // carré de 8 m, 16 cases par longueur d'onde
+    p.cfl = 0.6;
+    p.left = p.right = p.bottom = p.top = Edge::Absorbing;
+    p.spongeCells = 38;  // 1,2 m
+    Wave2D w(p);
+    const double lambda = 0.5, omega = 2.0 * pi * p.speed / lambda, k = 2.0 * pi / lambda;
+    PointSource src;
+    src.x = src.y = 4.0;
+    src.omega = omega;
+    src.amplitude = 1.0;
+    w.addSource(src);
+
+    const std::vector<double> radii = {0.5, 0.75, 1.0, 1.5, 2.0, 2.5};
+    std::vector<double> amp(radii.size(), 0.0);
+    const double period = 2.0 * pi / omega;
+    const double tEnd = 7.0;
+    while (w.time() < tEnd) {
+        w.step();
+        if (w.time() > tEnd - 3.0 * period)  // les 3 dernières périodes : régime permanent (le front arrive à r = 2,5 vers t = 2,5 ; montée 2 périodes)
+            for (std::size_t m = 0; m < radii.size(); ++m)
+                amp[m] = std::max(amp[m], std::abs(w.u()[w.index(static_cast<int>(std::lround((4.0 + radii[m]) / p.dx)), 128)]));
+    }
+    std::printf("  source ponctuelle (lambda = 0.5 m, 16 cases) : amplitude A(r) contre |H0(k r)| et 1/sqrt(r)\n    r (m)    A(r)         A/|H0(kr)|    A sqrt(r)\n");
+    double first = 0.0, worst = 0.0;
+    for (std::size_t m = 0; m < radii.size(); ++m) {
+        const double kr = k * radii[m];
+        const double h = std::hypot(std::cyl_bessel_j(0.0, kr), std::cyl_neumann(0.0, kr));
+        const double ratio = amp[m] / h;
+        if (m == 0) first = ratio;
+        worst = std::max(worst, std::abs(ratio / first - 1.0));
+        std::printf("    %.2f   %.5f   %.6f   %.5f\n", radii[m], amp[m], ratio, amp[m] * std::sqrt(radii[m]));
+    }
+    CHECK(worst <= 0.03);
+    // pente log-log de A(r) sur r de 1 à 2,5 m : -1/2
+    const double slope = std::log(amp[5] / amp[2]) / std::log(radii[5] / radii[2]);
+    CHECK(std::abs(slope + 0.5) <= 0.05);
+    std::printf("  ecart max de A/|H0| a sa valeur a 0.5 m : %.1e ; pente de A(r) entre 1 et 2.5 m : %.4f (attendu -0.5)\n", worst, slope);
+}
+
 }  // namespace
 
 int main() {
@@ -1027,6 +1312,11 @@ int main() {
     testAnisotropy2D();
     testGrowthRates();
     testDispersionErrorConstant();
+    std::printf("Cuve a ondes, milieu variable (O3)\n");
+    testVariableSpeedEnergy();
+    testSpeedFieldUniform();
+    testRefraction();
+    testPointSourceAmplitude();
 
     if (g_failures == 0) {
         std::printf("test_waves : OK\n");
