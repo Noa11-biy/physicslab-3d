@@ -59,6 +59,10 @@ public:
     // Position u0(x) et vitesse v0(x) à t = 0 (v0 vide = au repos). Les extrémités fixes ou absorbantes sont remises à 0.
     // L'état d'avant, u^{-1}, vient d'un développement de Taylor à l'ordre 2 : le schéma démarre sans erreur d'ordre 1.
     void setInitial(const std::function<double(double)>& u0, const std::function<double(double)>& v0 = {});
+    // Impose directement les deux niveaux de temps u^{-1} (previous) et u^0 (current) : pour un état COHÉRENT AVEC LA GRILLE (par exemple un paquet
+    // d'ondes qui va purement vers la droite, avec sa vraie relation de dispersion). Avec setInitial, la vitesse initiale est prise au sens
+    // continu et un paquet de quelques cases par longueur d'onde reçoit une onde de retour parasite. Bords fixes ou absorbants remis à 0.
+    void setStates(const std::function<double(double)>& previous, const std::function<double(double)>& current);
 
     void step();
     void advance(long long n) { for (long long k = 0; k < n; ++k) step(); }
