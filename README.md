@@ -33,7 +33,7 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
-./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 13 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7, O0, O1)
+./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 14 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7, O0, O1, O2)
 ./build/physicslab --gpu-test               # M7 : compare le calcul N-corps du GPU (compute shader) au CPU double, mesure les temps
 ```
 
@@ -72,7 +72,7 @@ Ordre de progression (cocher au fil des modules) :
 - [ ] Ondes (acoustique, optique), en cours sur la branche `module/ondes`
   - [x] O0 : socle (FFT, équation d'onde 1D et 2D en saute-mouton, bords fixe / libre / éponge, relief coloré ; `--sim 12`)
   - [x] O1 : corde vibrante (chaîne de masses intégrée par les solveurs de la Mécanique, modes propres f_n = n c / 2L, harmoniques absents, dispersion, spectre FFT ; `--sim 13`)
-  - [ ] O2 : dispersion numérique et condition CFL
+  - [x] O2 : dispersion numérique et condition CFL (vitesses de phase et de groupe de la grille, anisotropie 2D, convergence, instabilité mesurée ; `--sim 14`)
   - [ ] O3 : cuve à ondes 2D sur GPU (réflexion, réfraction de Snell-Descartes)
   - [ ] O4 : interférences de Young et diffraction
   - [ ] O5 : acoustique (tuyau d'orgue, effet Doppler)
