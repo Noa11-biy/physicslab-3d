@@ -5,10 +5,13 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "physicslab/core/Constants.hpp"
+#include "physicslab/core/Solver.hpp"
 #include "physicslab/waves/Fft.hpp"
+#include "physicslab/waves/String.hpp"
 #include "physicslab/waves/Wave.hpp"
 
 namespace {
@@ -472,6 +475,269 @@ void testWave2DStability() {
     }
 }
 
+// ------------------------------------------------------- corde (O1) --------
+
+StringProblem makeString(int beads) {
+    StringProblem p;
+    p.beads = beads;
+    p.length = 1.0;
+    p.tension = 4.0;
+    p.density = 1.0;  // c = 2 m/s, f1 = 1 Hz
+    return p;
+}
+
+double maxAbsPositions(const pl::State& y, int beads) {
+    double m = 0.0;
+    for (int j = 0; j < beads; ++j) {
+        const double a = std::abs(y[j]);
+        if (!(a <= m)) m = a;
+    }
+    return m;
+}
+
+void testStringFormulas() {
+    const StringProblem p = makeString(50);
+    CHECK_NEAR(p.speed(), 2.0, 1e-15);
+    CHECK_NEAR(p.spacing(), 1.0 / 51.0, 1e-16);
+    CHECK_NEAR(p.maxOmega(), 4.0 * 51.0, 1e-9);                       // 2 c / a
+    CHECK_NEAR(p.verletDtLimit(), p.spacing() / p.speed(), 1e-16);    // dt_max = a / c : C = 1
+    CHECK_NEAR(p.fundamental(), 1.0, 1e-15);
+    // dispersion de la chaîne : w_n / (n pi c / L) = sin(t) / t avec t = n pi / (2 (N + 1))
+    for (int n : {1, 5, 25, 50}) {
+        const double t = n * pi / (2.0 * 51.0);
+        CHECK_NEAR(p.chainOmega(n) / p.continuumOmega(n), std::sin(t) / t, 1e-14);
+    }
+    std::printf("  chaine N = 50 : w_1/(pi c/L) = %.8f, w_50/(50 pi c/L) = %.6f, coupure %.1f rad/s, dt max Verlet %.6f s, RK4 %.6f s\n",
+                p.chainOmega(1) / p.continuumOmega(1), p.chainOmega(50) / p.continuumOmega(50), p.maxOmega(), p.verletDtLimit(), p.rk4DtLimit());
+    // la limite continue : N grand, les fréquences deviennent celles de la corde
+    const StringProblem big = makeString(3000);
+    CHECK(std::abs(big.chainOmega(3) / big.continuumOmega(3) - 1.0) < 1e-6);
+}
+
+void testStringModes() {
+    const StringProblem p = makeString(40);
+    const pl::OdeFunction f = p.rhs();
+    // un mode est un vecteur propre : l'accélération vaut - w_n² u
+    for (int n : {1, 2, 7, 40}) {
+        const std::vector<double> u = p.modeShape(n, 0.3);
+        pl::State y = StringProblem::state(u, std::vector<double>(p.beads, 0.0)), dy(y.size());
+        f(0.0, y, dy);
+        const double w2 = p.chainOmega(n) * p.chainOmega(n);
+        double worst = 0.0;
+        for (int j = 0; j < p.beads; ++j) worst = std::max(worst, std::abs(dy[p.beads + j] + w2 * u[j]));
+        CHECK(worst <= 1e-12 * w2);
+    }
+
+    // l'énergie se range exactement par mode : somme des E_n = E
+    const StringModes modes(p);
+    Lcg rng;
+    std::vector<double> u(p.beads), v(p.beads);
+    for (double& x : u) x = rng.next();
+    for (double& x : v) x = rng.next();
+    const pl::State y = StringProblem::state(u, v);
+    double sum = 0.0;
+    for (double e : modes.modeEnergies(y)) sum += e;
+    CHECK_NEAR(sum, p.energy(y), 1e-12 * p.energy(y));
+
+    // un mode pur garde toute son énergie dans ce mode
+    const pl::State pure = StringProblem::state(p.modeShape(3, 0.01), std::vector<double>(p.beads, 0.0));
+    const std::vector<double> e = modes.modeEnergies(pure);
+    double others = 0.0;
+    for (int n = 1; n <= p.beads; ++n)
+        if (n != 3) others = std::max(others, e[n - 1]);
+    CHECK_NEAR(e[2], p.energy(pure), 1e-12 * p.energy(pure));
+    CHECK(others <= 1e-25 * e[2]);
+    std::printf("  energie par mode : somme / E - 1 = %.1e ; mode pur 3, autres modes <= %.1e x E_3\n", sum / p.energy(y) - 1.0, others / e[2]);
+}
+
+void testStringExact() {
+    const StringProblem p = makeString(30);
+    const StringModes modes(p);
+    const std::vector<double> u0 = p.pluck(0.3, 0.1), v0(p.beads, 0.0);
+
+    const pl::State y0 = modes.exact(u0, v0, 0.0);
+    double init = 0.0;
+    for (int j = 0; j < p.beads; ++j) init = std::max(init, std::abs(y0[j] - u0[j]));
+    CHECK(init <= 1e-15);
+
+    // contre une référence indépendante : RK45 serré
+    pl::RK45 rk;
+    rk.relTol = 1e-12;
+    rk.absTol = 1e-15;
+    pl::State y = StringProblem::state(u0, v0);
+    pl::advance(rk, p.rhs(), 0.0, y, 1.7);
+    const pl::State ex = modes.exact(u0, v0, 1.7);
+    double err = 0.0;
+    for (std::size_t i = 0; i < y.size(); ++i) err = std::max(err, std::abs(y[i] - ex[i]));
+    CHECK(err <= 1e-9);
+    // l'énergie de la solution exacte ne dépend pas du temps
+    CHECK_NEAR(p.energy(ex), p.energy(y0), 1e-12 * p.energy(y0));
+    std::printf("  solution exacte de la chaine (N = 30, t = 1.7) : ecart a RK45 serre %.1e, E(t)/E(0) - 1 = %.1e\n", err, p.energy(ex) / p.energy(y0) - 1.0);
+}
+
+void testStringContinuum() {
+    // série de Fourier du pincement : à t = 0 elle redonne le triangle ; les harmoniques pairs d'un pincement au milieu sont absents
+    const StringProblem p = makeString(400);
+    const double x0 = 0.3, h = 0.1;
+    double worst0 = 0.0;
+    for (double x : {0.1, 0.2, 0.3, 0.55, 0.8}) {
+        const double tri = x < x0 ? h * x / x0 : h * (1.0 - x) / (1.0 - x0);
+        worst0 = std::max(worst0, std::abs(p.continuumPluck(x, 0.0, x0, h, 4000) - tri));
+    }
+    CHECK(worst0 <= 2e-4);
+    CHECK(std::abs(p.pluckCoefficient(2, 0.5, h)) <= 1e-15);
+    CHECK(std::abs(p.pluckCoefficient(4, 0.5, h)) <= 1e-15);
+    CHECK(std::abs(p.pluckCoefficient(1, 0.5, h)) > 0.01);
+
+    // la chaîne de 400 masses suit la corde continue à 1 % de la hauteur près : l'écart (mesuré 5,6e-4) n'est pas une erreur de schéma
+    // mais la DISPERSION de la chaîne : les modes n >~ 30, trop graves, se déphasent au bout de 0,37 s (b_n décroît seulement en 1 / n²)
+    const StringModes modes(p);
+    const std::vector<double> u0 = p.pluck(x0, h), v0(p.beads, 0.0);
+    const double t = 0.37;
+    const pl::State y = modes.exact(u0, v0, t);
+    double worst = 0.0;
+    for (int j = 1; j <= p.beads; ++j) worst = std::max(worst, std::abs(y[j - 1] - p.continuumPluck(j * p.spacing(), t, x0, h, 4000)));
+    CHECK(worst <= 1e-3);
+    std::printf("  serie de Fourier a t = 0 : ecart au triangle %.1e (4000 termes) ; chaine N = 400 contre corde continue a t = 0.37 : %.1e (h = 0.1)\n", worst0, worst);
+}
+
+void testStringHarmonics() {
+    // N + 1 = 48 : un pincement à L/3 ou L/2 tombe exactement sur une masse, les modes multiples de 3 (resp. pairs) sont absents
+    const StringProblem p = makeString(47);
+    const StringModes modes(p);
+    const std::vector<double> third = modes.amplitudes(p.pluck(1.0 / 3.0, 0.1));
+    const std::vector<double> half = modes.amplitudes(p.pluck(0.5, 0.1));
+    double missing3 = 0.0, missing2 = 0.0;
+    for (int n = 3; n <= 47; n += 3) missing3 = std::max(missing3, std::abs(third[n - 1]));
+    for (int n = 2; n <= 46; n += 2) missing2 = std::max(missing2, std::abs(half[n - 1]));
+    CHECK(missing3 <= 1e-15);
+    CHECK(missing2 <= 1e-15);
+    CHECK(std::abs(third[0]) > 1e-3 && std::abs(third[1]) > 1e-4 && std::abs(half[0]) > 1e-3 && std::abs(half[2]) > 1e-5);
+    std::printf("  harmoniques absents : pincement a L/3 -> modes 3, 6, 9... <= %.1e (mode 1 : %.3e) ; a L/2 -> modes pairs <= %.1e (mode 3 : %.3e)\n",
+                missing3, third[0], missing2, half[2]);
+}
+
+void testStringSolvers() {
+    const StringProblem p = makeString(20);
+    const std::vector<double> u0 = p.pluck(0.3, 0.1);
+    const double tEnd = 2.7;  // pas un multiple de la période (1 s) : voir oscillatorError
+    struct Row { const char* name; int first; double expected; double tolerance; };
+    const Row rows[] = {{"Euler symplectique", 0, 1.0, 0.25}, {"Verlet", 1, 2.0, 0.1}, {"RK4", 3, 4.0, 0.3}};
+    for (const Row& row : rows) {
+        // pré-asymptotique à 400-1600 pas (w_max dt jusqu'à 0.57 : ordres apparents 1.4 / 1.5) ; l'ordre se lit sur les pas fins
+        double e[4];
+        const int steps[4] = {800, 1600, 3200, 6400};
+        for (int r = 0; r < 4; ++r) {
+            std::unique_ptr<pl::Solver> solver;
+            if (row.first == 0) solver = std::make_unique<pl::SymplecticEuler>();
+            else if (row.first == 1) solver = std::make_unique<pl::VelocityVerlet>();
+            else solver = std::make_unique<pl::RK4>();
+            e[r] = stringError(p, u0, *solver, steps[r], tEnd);
+        }
+        const double s1 = std::log2(e[0] / e[1]), s2 = std::log2(e[1] / e[2]), s3 = std::log2(e[2] / e[3]);
+        CHECK(std::abs(s3 - row.expected) < row.tolerance);
+        std::printf("  chaine N = 20, t = 2.7 : %-18s erreurs %.3e, %.3e, %.3e, %.3e ; ordres %.3f, %.3f, %.3f\n", row.name, e[0], e[1], e[2], e[3], s1, s2, s3);
+    }
+}
+
+void testStringStability() {
+    // la pulsation de coupure fixe le pas maximal : Verlet pour w_max dt < 2, RK4 pour w_max dt < 2 sqrt(2)
+    const StringProblem p = makeString(40);
+    Lcg rng;
+    std::vector<double> noise(p.beads);
+    for (double& x : noise) x = 1e-3 * rng.next();
+    const pl::OdeFunction f = p.rhs();
+    struct Case { const char* name; double limit; bool verlet; };
+    const Case cases[] = {{"Verlet", p.verletDtLimit(), true}, {"RK4", p.rk4DtLimit(), false}};
+    for (const Case& c : cases) {
+        for (double factor : {0.98, 1.1}) {
+            pl::State y = StringProblem::state(noise, std::vector<double>(p.beads, 0.0));
+            std::unique_ptr<pl::Solver> solver;
+            if (c.verlet) solver = std::make_unique<pl::VelocityVerlet>();
+            else solver = std::make_unique<pl::RK4>();
+            const double dt = factor * c.limit;
+            double t = 0.0;
+            for (int i = 0; i < 400; ++i) { solver->step(f, t, y, dt); t += dt; }
+            const double m = maxAbsPositions(y, p.beads);
+            std::printf("  stabilite %-6s dt = %.2f x limite : max |u| apres 400 pas = %.3e\n", c.name, factor, m);
+            if (factor < 1.0) CHECK(m < 1.0);
+            else CHECK(m > 1e3);
+        }
+    }
+}
+
+// Le saute-mouton de l'équation d'onde (O0) est EXACTEMENT le Verlet de la chaîne de masses : mêmes nombres à l'arrondi près.
+void testStringIsLeapfrog() {
+    StringProblem p;
+    p.beads = 99;
+    p.length = 1.0;
+    p.tension = 1.0;
+    p.density = 1.0;  // c = 1, a = 0.01
+    const double cfl = 0.7, dt = cfl * p.spacing() / p.speed();
+    const std::vector<double> u0 = p.pluck(0.3, 0.1);
+
+    Wave1DParams wp;
+    wp.cells = 100;
+    wp.length = 1.0;
+    wp.speed = 1.0;
+    wp.cfl = cfl;
+    wp.left = wp.right = Edge::Fixed;
+    Wave1D wave(wp);
+    wave.setInitial([&](double x) { return x < 0.3 ? 0.1 * x / 0.3 : 0.1 * (1.0 - x) / 0.7; });
+
+    pl::State y = StringProblem::state(u0, std::vector<double>(p.beads, 0.0));
+    const pl::OdeFunction f = p.rhs();
+    pl::VelocityVerlet verlet;
+    double t = 0.0, worst = 0.0;
+    for (int i = 0; i < 300; ++i) {
+        verlet.step(f, t, y, dt);
+        t += dt;
+        wave.step();
+        for (int j = 1; j <= p.beads; ++j) worst = std::max(worst, std::abs(y[j - 1] - wave.u()[j]));
+    }
+    CHECK(worst <= 1e-13);
+    std::printf("  Verlet de la chaine = saute-mouton de l'equation d'onde : ecart max %.1e sur 300 pas (C = 0.7)\n", worst);
+}
+
+void testStringFrequencies() {
+    // les fréquences lues dans le SPECTRE du mouvement d'une masse sont celles des modes de la chaîne
+    const StringProblem p = makeString(60);
+    const StringModes modes(p);
+    const std::vector<double> u0 = p.pluck(0.37, 0.1), v0(p.beads, 0.0);
+    const int probe = 17;        // x = 0.295 L : ne tombe sur aucun noeud des modes 1 à 6
+    const double rate = 200.0;   // échantillons par seconde (Nyquist 100 Hz, coupure de la chaîne 38.8 Hz)
+    const int count = 16384;
+    const double dt = 1.0 / rate;
+
+    std::vector<double> exactSeries(count), rk4Series(count);
+    {
+        // le même calcul avec RK4 à 5 ms (stable : limite 11.5 ms), un échantillon par pas
+        pl::RK4 rk4;
+        pl::State y = StringProblem::state(u0, v0);
+        const pl::OdeFunction f = p.rhs();
+        double t = 0.0;
+        for (int i = 0; i < count; ++i) {
+            exactSeries[i] = modes.exact(u0, v0, i * dt)[probe];
+            rk4Series[i] = y[probe];
+            rk4.step(f, t, y, dt);
+            t += dt;
+        }
+    }
+    double worstExact = 0.0, worstRk4 = 0.0;
+    std::printf("  frequences lues dans le spectre (masse %d, 82 s, Hann + parabole) :\n    n   chaine exacte   spectre exact   spectre RK4    corde continue\n", probe);
+    for (int n = 1; n <= 6; ++n) {
+        const double chain = p.chainOmega(n) / (2.0 * pi), continuum = n * p.fundamental();
+        // fenêtre de ±10 % : les modes 4 et 5 ne sont séparés que de 25 % (une fenêtre de ±20 % avait pris le pic du mode 4 pour le 5)
+        const double fe = peakFrequency(exactSeries, rate, chain, 0.1), fr = peakFrequency(rk4Series, rate, chain, 0.1);
+        worstExact = std::max(worstExact, std::abs(fe - chain) / chain);
+        worstRk4 = std::max(worstRk4, std::abs(fr - chain) / chain);
+        std::printf("    %d   %.6f Hz    %.6f Hz   %.6f Hz   %.6f Hz\n", n, chain, fe, fr, continuum);
+    }
+    CHECK(worstExact <= 5e-4);
+    CHECK(worstRk4 <= 5e-4);
+    std::printf("  ecart relatif max a la chaine : spectre exact %.1e, spectre RK4 %.1e\n", worstExact, worstRk4);
+}
+
 }  // namespace
 
 int main() {
@@ -490,6 +756,16 @@ int main() {
     testWave2DSymmetry();
     testWave2DSponge();
     testWave2DStability();
+    std::printf("Corde (O1)\n");
+    testStringFormulas();
+    testStringModes();
+    testStringExact();
+    testStringContinuum();
+    testStringHarmonics();
+    testStringSolvers();
+    testStringStability();
+    testStringIsLeapfrog();
+    testStringFrequencies();
 
     if (g_failures == 0) {
         std::printf("test_waves : OK\n");
