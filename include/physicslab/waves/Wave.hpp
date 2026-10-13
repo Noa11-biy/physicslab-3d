@@ -95,6 +95,11 @@ struct Wave2DParams {
     // Vitesse c(i, j) en chaque noeud (taille (cellsX + 1)(cellsY + 1), rangée comme les champs) : vide = vitesse uniforme `speed`. Un milieu
     // à vitesse variable est un milieu d'indice n = c0 / c(x, y) (cuve à ondes de profondeur variable) : réfraction de Snell-Descartes.
     std::vector<double> speedField;
+    // O4 : masque d'obstacles (taille (cellsX + 1)(cellsY + 1), 1 = noeud de l'écran, vide = aucun). Toute face qui touche un noeud de l'écran a un coefficient
+    // NUL : aucun flux ne la traverse (mur rigide, du/dn = 0, comme une paroi de cuve ou un écran acoustique), le noeud reste à 0 et le champ de chaque côté est
+    // indépendant. Un écran d'un seul noeud d'épaisseur est déjà opaque. Ne pas poser de source sur un noeud de l'écran. Le GPU n'a rien à savoir du masque :
+    // il reprend les coefficients de faces.
+    std::vector<unsigned char> wall;
 };
 
 // Source ponctuelle sinusoïdale : u_tt = ... + A sin(w t) ramp(t) delta(x - xs), « douce » (montée en sin² sur `rampPeriods` périodes) pour ne pas
@@ -104,6 +109,16 @@ struct PointSource {
     double amplitude = 1.0;      // A
     double omega = 6.283185307179586;  // pulsation [rad/s]
     double rampPeriods = 2.0;
+};
+
+// O4 : source en LIGNE verticale x = const, y de y0 à y1 : u_tt = ... + A sin(w t) ramp(t) delta(x - xs) (A par unité de longueur de ligne), donc une onde PLANE
+// qui part dans les deux sens, d'amplitude A / (2 c w) (1D : u_tt = c² u_xx + A delta(x) sin(w t)). Numériquement chaque noeud de la ligne reçoit (dt² / dx) A sin ramp.
+struct LineSource {
+    double x = 0.0;              // abscisse [m] (arrondie au noeud le plus proche)
+    double y0 = 0.0, y1 = 0.0;   // extrémités [m] (arrondies aux noeuds, bornées au domaine)
+    double amplitude = 1.0;
+    double omega = 6.283185307179586;
+    double rampPeriods = 3.0;
 };
 
 class Wave2D {
@@ -142,6 +157,9 @@ public:
     void clearSources() { sources_.clear(); }
     void addSource(const PointSource& s) { sources_.push_back(s); }
     const std::vector<PointSource>& sources() const { return sources_; }
+    void addLineSource(const LineSource& s) { lines_.push_back(s); }
+    const std::vector<LineSource>& lineSources() const { return lines_; }
+    bool isWall(int i, int j) const { return !p_.wall.empty() && p_.wall[index(i, j)] != 0; }
 
     void step();
     void advance(long long n) { for (long long k = 0; k < n; ++k) step(); }
@@ -161,6 +179,13 @@ private:
     long long steps_ = 0;
     std::vector<double> prev_, cur_, next_, sigma_, kx_, ky_;
     std::vector<PointSource> sources_;
+    std::vector<LineSource> lines_;
 };
+
+// Noeuds d'une source en ligne : colonne i, lignes j0..j1 (hors bords fixes). false si la source ne touche aucun noeud libre. Partagé avec le GPU.
+bool lineSourceNodes(const LineSource& s, const Wave2DParams& p, int& i, int& j0, int& j1);
+
+// Rampe en sin² de 0 à 1 sur `periods` périodes (1 si periods <= 0) : l'enveloppe des sources douces (point et ligne), partagée avec le calcul GPU.
+double sourceRamp(double t, double omega, double periods);
 
 }  // namespace pl::waves

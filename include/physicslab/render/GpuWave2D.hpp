@@ -38,6 +38,7 @@ public:
 private:
     void bindBuffers() const;
     void sourceValues(int* nodes, float* values, int& count) const;
+    void lineValues(int* nodes, float* values, int& count) const;
 
     unsigned int program_ = 0;
     unsigned int field_[3] = {0, 0, 0};     // u en rotation : précédent, courant, suivant
@@ -48,7 +49,9 @@ private:
     long long steps_ = 0;
     int freeEdge_[4] = {0, 0, 0, 0};         // gauche, droite, bas, haut : 1 = libre
     std::vector<waves::PointSource> sources_;
-    int uNx_ = -1, uNy_ = -1, uDt_ = -1, uFree_ = -1, uSourceCount_ = -1, uSourceNode_ = -1, uSourceValue_ = -1;
+    std::vector<waves::LineSource> lines_;
+    waves::Wave2DParams params_;             // copie de la géométrie (colonne et lignes des sources en ligne)
+    int uNx_ = -1, uNy_ = -1, uDt_ = -1, uFree_ = -1, uSourceCount_ = -1, uSourceNode_ = -1, uSourceValue_ = -1, uLineCount_ = -1, uLineNode_ = -1, uLineValue_ = -1;
     int cellsX_ = 0;
     double dx_ = 0.0;
 };

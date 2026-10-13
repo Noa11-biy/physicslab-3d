@@ -12,6 +12,7 @@ namespace pl {
 namespace {
 
 constexpr int kMaxSources = 4;  // taille des tableaux uniformes du shader
+constexpr int kMaxLines = 2;
 
 std::vector<float> toFloat(const std::vector<double>& v) { return std::vector<float>(v.begin(), v.end()); }
 
@@ -33,6 +34,9 @@ bool GpuWave2D::init(const std::string& shaderDir) {
     uSourceCount_ = glGetUniformLocation(program_, "uSourceCount");
     uSourceNode_ = glGetUniformLocation(program_, "uSourceNode[0]");
     uSourceValue_ = glGetUniformLocation(program_, "uSourceValue[0]");
+    uLineCount_ = glGetUniformLocation(program_, "uLineCount");
+    uLineNode_ = glGetUniformLocation(program_, "uLineNode[0]");
+    uLineValue_ = glGetUniformLocation(program_, "uLineValue[0]");
     return true;
 }
 
@@ -63,6 +67,10 @@ void GpuWave2D::upload(const waves::Wave2D& wave) {
     freeEdge_[2] = p.bottom == waves::Edge::Free;
     freeEdge_[3] = p.top == waves::Edge::Free;
     sources_ = wave.sources();
+    lines_ = wave.lineSources();
+    params_ = p;
+    params_.speedField.clear();  // inutile ici (les coefficients de faces suffisent) : pas de copie de plus
+    params_.wall.clear();
 
     fill(field_[0], toFloat(wave.uPrevious()));
     fill(field_[1], toFloat(wave.u()));
@@ -94,6 +102,22 @@ void GpuWave2D::sourceValues(int* nodes, float* values, int& count) const {
     }
 }
 
+// Sources en ligne (O4) : (colonne, j0, j1) et valeur (dt² / dx) A rampe(t) sin(w t) = ratio * dx * ..., en double comme Wave2D::step.
+void GpuWave2D::lineValues(int* nodes, float* values, int& count) const {
+    count = 0;
+    const double t = steps_ * dt_;
+    for (const waves::LineSource& src : lines_) {
+        if (count >= kMaxLines) break;
+        int i, j0, j1;
+        if (!waves::lineSourceNodes(src, params_, i, j0, j1)) continue;
+        nodes[3 * count] = i;
+        nodes[3 * count + 1] = j0;
+        nodes[3 * count + 2] = j1;
+        values[count] = static_cast<float>(ratio_ * dx_ * src.amplitude * waves::sourceRamp(t, src.omega, src.rampPeriods) * std::sin(src.omega * t));
+        ++count;
+    }
+}
+
 void GpuWave2D::bindBuffers() const {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, field_[(slot_ + 2) % 3]);  // précédent
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, field_[slot_]);            // courant
@@ -120,6 +144,15 @@ void GpuWave2D::step(int count) {
         if (sourceCount > 0) {
             glUniform2iv(uSourceNode_, sourceCount, nodes);
             glUniform1fv(uSourceValue_, sourceCount, values);
+        }
+        int lineNodes[3 * kMaxLines] = {0};
+        float lineVals[kMaxLines] = {0.0f};
+        int lineCount = 0;
+        lineValues(lineNodes, lineVals, lineCount);
+        glUniform1i(uLineCount_, lineCount);
+        if (lineCount > 0) {
+            glUniform3iv(uLineNode_, lineCount, lineNodes);
+            glUniform1fv(uLineValue_, lineCount, lineVals);
         }
         bindBuffers();
         glDispatchCompute(groupsX, groupsY, 1);

@@ -158,6 +158,17 @@ Wave2D::Wave2D(const Wave2DParams& params) : p_(params) {
             if (j < p_.cellsY) ky_[k] = ratio_ * 0.5 * (c2 + speed[k + stride] * speed[k + stride]);
         }
 
+    // Écran (O4) : une face qui touche un noeud de l'écran ne transmet rien.
+    assert(p_.wall.empty() || p_.wall.size() == count);
+    if (!p_.wall.empty()) {
+        for (int j = 0; j <= p_.cellsY; ++j)
+            for (int i = 0; i <= p_.cellsX; ++i) {
+                const int k = index(i, j);
+                if (i < p_.cellsX && (p_.wall[k] || p_.wall[k + 1])) kx_[k] = 0.0;
+                if (j < p_.cellsY && (p_.wall[k] || p_.wall[k + stride])) ky_[k] = 0.0;
+            }
+    }
+
     // Amortissement additif : sigma(x, y) = sigma_x(x) + sigma_y(y). Aux coins les deux couches se cumulent.
     const double sigmaMax = spongeSigmaMax(cMax_, p_.spongeCells * p_.dx, p_.spongeReflection, p_.spongeOrder);
     const int order = p_.spongeOrder;
@@ -171,6 +182,23 @@ Wave2D::Wave2D(const Wave2DParams& params) : p_(params) {
             sigma_[index(i, j)] = s;
         }
     }
+}
+
+double sourceRamp(double t, double omega, double periods) {
+    const double pi = 3.14159265358979323846;
+    const double r = periods > 0.0 ? std::min(1.0, t / (periods * 2.0 * pi / omega)) : 1.0;
+    const double s = std::sin(0.5 * pi * r);
+    return s * s;
+}
+
+bool lineSourceNodes(const LineSource& s, const Wave2DParams& p, int& i, int& j0, int& j1) {
+    i = std::clamp(static_cast<int>(std::lround(s.x / p.dx)), 0, p.cellsX);
+    j0 = std::clamp(static_cast<int>(std::lround(std::min(s.y0, s.y1) / p.dx)), 0, p.cellsY);
+    j1 = std::clamp(static_cast<int>(std::lround(std::max(s.y0, s.y1) / p.dx)), 0, p.cellsY);
+    if ((i == 0 && p.left != Edge::Free) || (i == p.cellsX && p.right != Edge::Free)) return false;
+    j0 = std::max(j0, p.bottom != Edge::Free ? 1 : 0);
+    j1 = std::min(j1, p.top != Edge::Free ? p.cellsY - 1 : p.cellsY);
+    return j0 <= j1;
 }
 
 std::vector<double> Wave2D::makeSpeedField(const Wave2DParams& g, const std::function<double(double, double)>& c) {
@@ -203,6 +231,9 @@ void Wave2D::clampBoundaries(std::vector<double>& f) const {
         if (p_.bottom != Edge::Free) f[index(i, 0)] = 0.0;
         if (p_.top != Edge::Free) f[index(i, ny)] = 0.0;
     }
+    if (!p_.wall.empty())
+        for (std::size_t k = 0; k < f.size(); ++k)
+            if (p_.wall[k]) f[k] = 0.0;
 }
 
 void Wave2D::setInitial(const std::function<double(double, double)>& u0, const std::function<double(double, double)>& v0) {
@@ -262,10 +293,14 @@ void Wave2D::step() {
         const bool fixedNode = (i == 0 && p_.left != Edge::Free) || (i == nx && p_.right != Edge::Free) || (j == 0 && p_.bottom != Edge::Free) ||
                                (j == ny && p_.top != Edge::Free);
         if (fixedNode) continue;
-        const double period = 6.283185307179586 / src.omega;
-        const double r = src.rampPeriods > 0.0 ? std::min(1.0, t / (src.rampPeriods * period)) : 1.0;
-        const double ramp = std::sin(0.5 * 3.14159265358979323846 * r) * std::sin(0.5 * 3.14159265358979323846 * r);
-        next_[index(i, j)] += ratio_ * src.amplitude * ramp * std::sin(src.omega * t);
+        next_[index(i, j)] += ratio_ * src.amplitude * sourceRamp(t, src.omega, src.rampPeriods) * std::sin(src.omega * t);
+    }
+    // sources en ligne : chaque noeud reçoit (dt² / dx) A ramp sin
+    for (const LineSource& src : lines_) {
+        int i, j0, j1;
+        if (!lineSourceNodes(src, p_, i, j0, j1)) continue;
+        const double value = ratio_ * p_.dx * src.amplitude * sourceRamp(t, src.omega, src.rampPeriods) * std::sin(src.omega * t);
+        for (int j = j0; j <= j1; ++j) next_[index(i, j)] += value;
     }
     prev_.swap(next_);
     prev_.swap(cur_);

@@ -46,7 +46,8 @@ add_library(physicslab_core STATIC
     src/waves/Fft.cpp
     src/waves/Wave.cpp
     src/waves/String.cpp
-    src/waves/Dispersion.cpp)
+    src/waves/Dispersion.cpp
+    src/waves/Diffraction.cpp)
 target_include_directories(physicslab_core PUBLIC include)
 physicslab_warnings(physicslab_core)
 

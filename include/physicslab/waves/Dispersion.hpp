@@ -15,6 +15,8 @@
 // La condition CFL (Courant-Friedrichs-Lewy) est la version géométrique : le domaine de dépendance numérique doit contenir le domaine physique.
 #pragma once
 
+#include <vector>
+
 namespace pl::waves::dispersion {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -37,6 +39,20 @@ double omegaDt2D(double kxdx, double kydx, double cfl);
 // C'est la direction et la vitesse d'un faisceau (paquet d'ondes) : elle diffère de celles de l'onde (vecteur d'onde, vitesse de phase) dès que la grille est
 // anisotrope, donc la réfraction d'un faisceau suit la loi de Snell de la GRILLE (conservation de w et de ky, relation de dispersion discrète), pas celle du continu.
 void groupVelocity2D(double kxdx, double kydx, double cfl, double& vx, double& vy);
+
+// O4 : phase k.r accumulée par une onde de la grille 2D le long d'un RAYON. Loin de la source, le champ de la grille est dominé par l'onde dont la vitesse de GROUPE
+// pointe vers le point d'observation (phase stationnaire) ; sa phase est r f(phi) avec f(phi) = k(phi).r_chapeau, où le vecteur d'onde k vérifie la relation de
+// dispersion discrète à la pulsation donnée ET a sa vitesse de groupe dans la direction phi. Comme la grille est anisotrope, f dépend de phi (de 1 % au plus à 10 cases
+// par longueur d'onde), donc sur un chemin de 20 longueurs d'onde le déphasage entre deux directions voisines peut atteindre quelques % de longueur d'onde : mesuré,
+// c'est ce qui décale les franges de Young de 8 % en sin(theta) à 10 cases par longueur d'onde et R = 22 lambda. Table interpolée linéairement (361 directions de 0 à 90°).
+class RayPhase2D {
+public:
+    RayPhase2D(double omegaDt, double cfl, double dx);
+    double axisWavenumber() const { return f_.front(); }   // k le long d'un axe [rad/m]
+    double phase(double x, double y) const;                // k.r pour le déplacement (x >= 0, y quelconque) [rad]
+private:
+    std::vector<double> f_;
+};
 
 // Facteur de croissance par pas |lambda| >= 1 du mode (kx dx, ky dx) ; 1 si le mode est stable. 1D : ky dx = 0 et s² = sin²(kx dx / 2).
 double growthPerStep1D(double x, double cfl);

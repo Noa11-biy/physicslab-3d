@@ -6,6 +6,7 @@
 // Mêmes formules que le CPU `double`, en float : k_face = (dt² / dx²) c²_face (moyenne arithmétique des c² des deux noeuds), calculés une fois en double
 // sur le CPU. Un thread par noeud. Bord fixe ou absorbant : u = 0 (noeud non mis à jour) ; bord libre : point fantôme symétrique (face symétrique).
 // Les sources ponctuelles sont ajoutées au noeud : leur valeur pour CE pas (ratio * A * rampe(t) * sin(w t)) est calculée en double sur le CPU.
+// O4 : les sources en ligne (colonne i, lignes j0 à j1, même valeur) de la même façon. Les écrans (obstacles) n'ont rien de spécial ici : leurs faces ont un coefficient nul.
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -23,6 +24,9 @@ uniform ivec4 uFree;       // bord libre (1) ou fixe / absorbant (0) : gauche, d
 uniform int uSourceCount;
 uniform ivec2 uSourceNode[4];
 uniform float uSourceValue[4];
+uniform int uLineCount;
+uniform ivec3 uLineNode[2];   // colonne i, ligne j0, ligne j1
+uniform float uLineValue[2];
 
 void main() {
     const ivec2 p = ivec2(gl_GlobalInvocationID.xy);
@@ -47,5 +51,7 @@ void main() {
     float v = (2.0 * c - (1.0 - s) * prevU[k] + flux) / (1.0 + s);
     for (int m = 0; m < uSourceCount; ++m)
         if (p == uSourceNode[m]) v += uSourceValue[m];
+    for (int m = 0; m < uLineCount; ++m)
+        if (p.x == uLineNode[m].x && p.y >= uLineNode[m].y && p.y <= uLineNode[m].z) v += uLineValue[m];
     nextU[k] = v;
 }

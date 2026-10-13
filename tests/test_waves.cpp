@@ -11,6 +11,7 @@
 #include "physicslab/core/Constants.hpp"
 #include "physicslab/core/Solver.hpp"
 #include "physicslab/waves/Dispersion.hpp"
+#include "physicslab/waves/Diffraction.hpp"
 #include "physicslab/waves/Fft.hpp"
 #include "physicslab/waves/String.hpp"
 #include "physicslab/waves/Wave.hpp"
@@ -1276,6 +1277,240 @@ void testPointSourceAmplitude() {
     std::printf("  ecart max de A/|H0| a sa valeur a 0.5 m : %.1e ; pente de A(r) entre 1 et 2.5 m : %.4f (attendu -0.5)\n", worst, slope);
 }
 
+// ------------------------------------------------------------ O4 : Young -----
+
+namespace diff = pl::waves::diffraction;
+
+// Un écran troué, des bords fixes autour : l'énergie discrète reste conservée à l'arrondi (un écran est un mur rigide, du/dn = 0) ; un écran PLEIN
+// laisse l'autre côté exactement au repos (les faces sont fermées : 0 en double, pas « presque 0 »).
+void testWallEnergyAndOpacity() {
+    Wave2DParams p;
+    p.cellsX = 120;
+    p.cellsY = 80;
+    p.dx = 0.05;
+    p.cfl = 0.6;
+    p.wall.assign(121 * 81, 0);
+    for (int j = 0; j <= 80; ++j)
+        for (int i = 60; i < 62; ++i) p.wall[static_cast<std::size_t>(j) * 121 + i] = (j < 30 || j > 45) ? 1 : 0;  // fente de 16 noeuds
+    auto bump = [](double x, double y) { return x > 2.4 ? 0.0 : std::exp(-((x - 1.5) * (x - 1.5) + (y - 2.0) * (y - 2.0)) / (2 * 0.2 * 0.2)); };
+    Wave2D w(p);
+    w.setInitial(bump);
+    const double e0 = w.energy();
+    double drift = 0.0;
+    for (int n = 0; n < 1500; ++n) {
+        w.step();
+        drift = std::max(drift, std::abs(w.energy() / e0 - 1.0));
+    }
+    std::printf("  ecran troue (fente de 16 noeuds, murs fixes) : derive d'energie max %.1e sur 1500 pas\n", drift);
+    CHECK(drift <= 1e-13);
+
+    Wave2DParams q = p;
+    q.wall.assign(121 * 81, 0);
+    for (int j = 0; j <= 80; ++j)
+        for (int i = 60; i < 62; ++i) q.wall[static_cast<std::size_t>(j) * 121 + i] = 1;
+    Wave2D z(q);
+    z.setInitial(bump);
+    double right = 0.0;
+    for (int n = 0; n < 1500; ++n) {
+        z.step();
+        for (int j = 0; j <= 80; ++j)
+            for (int i = 62; i <= 120; ++i) right = std::max(right, std::abs(z.u()[z.index(i, j)]));
+    }
+    std::printf("  ecran plein : |u| max de l'autre cote %.1e (exactement 0 attendu), max cote source %.3f\n", right, z.maxAbs());
+    CHECK(right == 0.0);
+    CHECK(z.maxAbs() > 0.1);
+}
+
+// Détection synchrone : l'amplitude d'une sinusoïde est lue à moins de 1e-3 même sans nombre entier de périodes (fenêtre de Hann).
+void testLockIn() {
+    const double omega = 2.0 * pi * 0.137, dt = 1.0;
+    diff::LockIn lock(2, omega, dt, 400);
+    for (long long n = 0; n < 400; ++n) lock.add(std::vector<double>{0.7 * std::sin(omega * n * dt + 0.9), -0.2 * std::cos(omega * n * dt)}, 1000 + n);
+    const std::vector<double> a = lock.amplitude();
+    std::printf("  detection synchrone (400 pas, %.2f periodes) : amplitudes %.6f (0.7) et %.6f (0.2)\n", omega * 400 / (2 * pi), a[0], a[1]);
+    CHECK_NEAR(a[0], 0.7, 7e-4);
+    CHECK_NEAR(a[1], 0.2, 2e-4);
+}
+
+// FFT de l'ouverture = formule sinc² * réseau ; minima de la fente simple en m lambda / b, du réseau en (m + 1/2) lambda / a.
+void testFraunhoferFormula() {
+    const double dy = 0.1, lambda = 1.0;
+    std::vector<double> aperture(1024, 0.0);
+    for (int m = 0; m < 2; ++m)
+        for (int k = 0; k < 20; ++k) aperture[300 + 40 * m + k] = 1.0;  // b = 2, a = 4
+    const diff::FarField f = diff::fraunhofer(aperture, dy, lambda);
+    double worst = 0.0;
+    for (std::size_t k = 0; k < f.sinTheta.size(); ++k)
+        if (std::abs(f.sinTheta[k]) <= 0.8) worst = std::max(worst, std::abs(f.intensity[k] - diff::slitIntensity(2.0, 4.0, 2, lambda, f.sinTheta[k])));
+    std::printf("  Fraunhofer par FFT (b = 2, a = 4, lambda = 1) : ecart max a la formule %.1e (|sin theta| <= 0.8)\n", worst);
+    CHECK(worst <= 3e-3);
+
+    std::vector<double> x, y;
+    for (std::size_t k = 0; k < f.sinTheta.size(); ++k)
+        if (f.sinTheta[k] >= 0.0 && f.sinTheta[k] <= 0.9) {
+            x.push_back(f.sinTheta[k]);
+            y.push_back(f.intensity[k]);
+        }
+    const std::vector<double> minima = diff::findMinima(x, y);
+    const double expected[] = {0.125, 0.375, 0.5, 0.625, 0.875};
+    std::printf("    minima lus :");
+    for (double m : minima) std::printf(" %.5f", m);
+    std::printf("\n    attendus   : 0.125 0.375 0.5 0.625 0.875\n");
+    CHECK(minima.size() >= 5);
+    for (int k = 0; k < 5 && k < static_cast<int>(minima.size()); ++k) CHECK_NEAR(minima[k], expected[k], 2e-3);
+
+    // formule : premier minimum, symétrie, pic principal d'un réseau
+    CHECK_NEAR(diff::slitIntensity(2.0, 4.0, 2, 1.0, 0.5), 0.0, 1e-15);
+    CHECK_NEAR(diff::slitIntensity(2.0, 4.0, 2, 1.0, 0.0), 1.0, 1e-15);
+    CHECK_NEAR(diff::slitIntensity(2.0, 4.0, 2, 1.0, 0.25), diff::slitIntensity(2.0, 4.0, 2, 1.0, -0.25), 1e-15);
+    CHECK_NEAR(diff::slitIntensity(1.0, 3.0, 5, 1.0, 1.0 / 3.0), std::pow(std::sin(pi / 3.0) / (pi / 3.0), 2.0), 1e-12);
+}
+
+// Une source en ligne donne une onde PLANE (uniforme en y, la même de chaque côté de la ligne). Amplitude : A / (2 c w) dans le continu ; sur la grille, le saut au noeud
+// de la source donne exactement |U| = A dx / (2 c² sin(k dx)) (relation de dispersion discrète), soit 5,9 % de plus à 10 cases par longueur d'onde.
+void testLineSourcePlane() {
+    Wave2DParams p;
+    p.cellsX = 300;
+    p.cellsY = 300;
+    p.dx = 0.1;
+    p.cfl = 0.625;
+    p.left = p.right = p.bottom = p.top = Edge::Absorbing;
+    p.spongeCells = 30;
+    Wave2D w(p);
+    LineSource s;
+    s.x = 15.0;
+    s.y0 = 0.0;
+    s.y1 = 30.0;
+    s.amplitude = 1.0;
+    s.omega = 2.0 * pi;
+    w.addLineSource(s);
+    const long long window = 256;  // 16 periodes
+    const long long start = static_cast<long long>(std::lround(24.0 / w.dt()));
+    diff::LockIn lock(w.u().size(), s.omega, w.dt(), window);
+    for (long long n = 0; n < start + window; ++n) {
+        w.step();
+        if (n >= start) lock.add(w.u(), n + 1);
+    }
+    const std::vector<double> amp = lock.amplitude();
+    const double continuous = s.amplitude / (2.0 * p.speed * s.omega);
+    const double kdx = 2.0 * std::asin(std::sin(0.5 * s.omega * w.dt()) / p.cfl);
+    const double predicted = s.amplitude * p.dx / (2.0 * p.speed * p.speed * std::sin(kdx));
+    double lo = 1e9, hi = 0.0, sum = 0.0;
+    int count = 0;
+    for (int j = 135; j <= 165; ++j) {
+        const double a = amp[w.index(200, j)];
+        lo = std::min(lo, a);
+        hi = std::max(hi, a);
+        sum += a;
+        ++count;
+    }
+    const double mid = sum / count;
+    const double left = amp[w.index(100, 150)] / amp[w.index(200, 150)];
+    std::printf("  source en ligne : amplitude moyenne %.6f ; continu A/(2 c w) = %.6f (rapport %.5f) ; formule de la grille %.6f (rapport %.5f) ; non-uniformite en y %.1e ; gauche/droite %.5f\n",
+                mid, continuous, mid / continuous, predicted, mid / predicted, (hi - lo) / mid, left);
+    CHECK_NEAR(mid / predicted, 1.0, 0.02);
+    CHECK((hi - lo) / mid <= 0.07);  // ondulation due aux réflexions obliques sur l'éponge et aux extrémités de la ligne
+    CHECK_NEAR(left, 1.0, 1e-2);
+}
+
+// L'expérience : arc de rayon R derrière l'écran, amplitude au carré en fonction de sin(theta). Trois courbes normalisées à leur maximum :
+// mesure (détection synchrone sur la grille), Rayleigh-Sommerfeld (distance finie, même ouverture, même longueur d'onde de grille) et Fraunhofer (champ lointain).
+struct ArcProfile {
+    std::vector<double> sinTheta, measured, rayleigh, gridRayleigh, fraunhofer;
+    double lambdaGrid = 0.0, width = 0.0, pitch = 0.0;
+};
+
+ArcProfile runSlits(const diff::SlitScreenSpec& spec, double radius, const char* label) {
+    const diff::SlitScreen e = diff::makeSlitScreen(spec);
+    Wave2D w(e.params);
+    w.addLineSource(e.source);
+    const double dt = w.dt();
+    const long long window = static_cast<long long>(std::lround(8.0 * 2.0 * pi / e.omega / dt));
+    const long long start = static_cast<long long>(std::lround((spec.screenX - spec.sourceX + radius + 6.0) / dt));
+    diff::LockIn lock(w.u().size(), e.omega, dt, window);
+    for (long long n = 0; n < start + window; ++n) {
+        w.step();
+        if (n >= start) lock.add(w.u(), n + 1);
+    }
+    const std::vector<double> amp = lock.amplitude();
+    ArcProfile out;
+    out.lambdaGrid = diff::gridWavelength(e.omega, dt, spec.dx, spec.cfl);
+    out.width = e.slitWidth;
+    out.pitch = e.pitch;
+    const double k = 2.0 * pi / out.lambdaGrid;
+    const dispersion::RayPhase2D ray(e.omega * dt, spec.cfl, spec.dx);
+    for (double deg = -55.0; deg <= 55.0001; deg += 0.25) {
+        const double th = deg * pi / 180.0, s = std::sin(th);
+        const double px = e.centerX + radius * std::cos(th), py = e.centerY + radius * s;
+        out.sinTheta.push_back(s);
+        const double a = diff::sampleField(amp, e.params.cellsX, e.params.cellsY, spec.dx, px, py);
+        const double r = diff::apertureAmplitude(e.aperture, spec.dx, k, e.centerX, px, py);
+        out.measured.push_back(a * a);
+        out.rayleigh.push_back(r * r);
+        const double g = diff::apertureAmplitudeGrid(e.aperture, spec.dx, ray, e.centerX, px, py);
+        out.gridRayleigh.push_back(g * g);
+        out.fraunhofer.push_back(diff::slitIntensity(out.width, out.pitch, spec.slits, out.lambdaGrid, s));
+    }
+    for (std::vector<double>* v : {&out.measured, &out.rayleigh, &out.gridRayleigh}) {
+        const double top = *std::max_element(v->begin(), v->end());
+        for (double& x : *v) x /= top;
+    }
+    std::printf("  %s : %lld pas, lambda continu %.3f, lambda de la grille %.4f m (%.2f cases), b = %.2f, a = %.2f\n", label, start + window, spec.lambda, out.lambdaGrid,
+                out.lambdaGrid / spec.dx, out.width, out.pitch);
+    return out;
+}
+
+// Chaque minimum de la courbe de référence (|sin theta| <= 0.8) est comparé au minimum mesuré le plus proche ; renvoie l'écart max en sin theta.
+double compareMinima(const std::vector<double>& s, const std::vector<double>& measured, const std::vector<double>& reference, const char* label, double skipNear = -1.0) {
+    const std::vector<double> found = diff::findMinima(s, measured);
+    double worst = 0.0;
+    std::printf("    minima de %s -> mesures (sin theta) :", label);
+    for (double m : diff::findMinima(s, reference)) {
+        if (std::abs(m) > 0.8 || m < 0.0 || std::abs(m - skipNear) < 0.06) continue;  // les deux côtés sont symétriques : on lit le côté positif et on vérifie l'autre plus bas
+        double best = 9.0, bestNeg = 9.0;
+        for (double f : found) {
+            if (std::abs(f - m) < std::abs(best - m)) best = f;
+            if (std::abs(f + m) < std::abs(bestNeg + m)) bestNeg = f;
+        }
+        worst = std::max({worst, std::abs(best - m), std::abs(bestNeg + m)});
+        std::printf("  %.4f -> %.4f / %.4f", m, best, bestNeg);
+    }
+    std::printf("\n    ecart max %.4f\n", worst);
+    return worst;
+}
+
+double maxDifference(const std::vector<double>& a, const std::vector<double>& b) {
+    double d = 0.0;
+    for (std::size_t k = 0; k < a.size(); ++k) d = std::max(d, std::abs(a[k] - b[k]));
+    return d;
+}
+
+void testYoungFringes() {
+    diff::SlitScreenSpec spec;  // lambda = 1 m (10 cases), R = 22 m
+    const double radius = 22.0;
+    struct Case {
+        const char* label;
+        int slits;
+        double pitch;
+    };
+    for (const Case& c : {Case{"fente simple b = 2", 1, 4.0}, Case{"Young b = 2, a = 4", 2, 4.0}, Case{"Young b = 2, a = 6", 2, 6.0}}) {
+        spec.slits = c.slits;
+        spec.pitch = c.pitch;
+        const ArcProfile m = runSlits(spec, radius, c.label);
+        const double eGrid = compareMinima(m.sinTheta, m.measured, m.gridRayleigh, "Rayleigh-Sommerfeld avec la phase de la GRILLE", c.slits > 1 ? 0.5 : -1.0);
+        const double eRs = compareMinima(m.sinTheta, m.measured, m.rayleigh, "Rayleigh-Sommerfeld continu (distance finie)");
+        const double eFr = compareMinima(m.sinTheta, m.measured, m.fraunhofer, "Fraunhofer (champ lointain)");
+        const double curveGrid = maxDifference(m.measured, m.gridRayleigh), curveRs = maxDifference(m.measured, m.rayleigh), curveFr = maxDifference(m.measured, m.fraunhofer);
+        std::printf("    ecart max des courbes normalisees : grille %.4f, Rayleigh-Sommerfeld continu %.4f, Fraunhofer %.4f\n", curveGrid, curveRs, curveFr);
+        CHECK(eGrid <= 0.01);
+        CHECK(curveGrid <= 0.04);
+        CHECK(eRs <= 0.12);  // l'anisotropie de la grille (10 cases par lambda, 22 lambda parcourues) décale les franges de 8 % : voir PASSATION, O4
+        (void)eFr;
+        (void)curveRs;
+        (void)curveFr;
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1317,6 +1552,12 @@ int main() {
     testSpeedFieldUniform();
     testRefraction();
     testPointSourceAmplitude();
+    std::printf("Young et diffraction (O4)\n");
+    testWallEnergyAndOpacity();
+    testLockIn();
+    testFraunhoferFormula();
+    testLineSourcePlane();
+    testYoungFringes();
 
     if (g_failures == 0) {
         std::printf("test_waves : OK\n");

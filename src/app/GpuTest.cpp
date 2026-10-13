@@ -13,6 +13,7 @@
 #include "physicslab/mechanics/NBody.hpp"
 #include "physicslab/render/GpuNBody.hpp"
 #include "physicslab/render/GpuWave2D.hpp"
+#include "physicslab/waves/Diffraction.hpp"
 #include "physicslab/waves/Wave.hpp"
 
 namespace pl {
@@ -479,6 +480,42 @@ void waveGpuTests(const std::string& shaderDir) {
         const WaveDiff d = waveCompare(cpu, gpu, 300);
         std::printf("  203 x 117 (pas un multiple de 16), 4 bords libres, 300 pas : écart max %.2e, L2 %.2e\n", d.maxRel, d.l2Rel);
         check(d.l2Rel <= kMaxL2, "dimensions quelconques : écart L2 GPU / CPU trop grand");
+    }
+    // d2. O4 : écran à deux fentes (faces à coefficient nul), onde plane par une source en ligne ; puis écran PLEIN : rien ne passe de l'autre côté, même en float
+    {
+        waves::diffraction::SlitScreenSpec spec;
+        spec.lengthX = 24.0;
+        spec.lengthY = 24.0;
+        spec.screenX = 8.0;
+        spec.sourceX = 4.0;
+        spec.slitWidth = 1.5;
+        spec.pitch = 3.0;
+        spec.sponge = 2.5;
+        {
+            const waves::diffraction::SlitScreen e = waves::diffraction::makeSlitScreen(spec);
+            waves::Wave2D cpu(e.params);
+            cpu.addLineSource(e.source);
+            const WaveDiff d = waveCompare(cpu, gpu, 700);
+            std::printf("  écran à 2 fentes + source en ligne, 240 x 240, 700 pas : écart max %.2e, L2 %.2e (|u|max = %.3f)\n", d.maxRel, d.l2Rel, d.cpuMax);
+            check(d.l2Rel <= kMaxL2, "écran à deux fentes : écart L2 GPU / CPU trop grand");
+        }
+        spec.slits = 0;
+        const waves::diffraction::SlitScreen e = waves::diffraction::makeSlitScreen(spec);
+        waves::Wave2D cpu(e.params);
+        cpu.addLineSource(e.source);
+        gpu.upload(cpu);
+        gpu.step(700);
+        std::vector<float> g;
+        gpu.readField(g);
+        float behind = 0.0f, before = 0.0f;
+        for (int j = 0; j < gpu.pointsY(); ++j)
+            for (int i = 0; i < gpu.pointsX(); ++i) {
+                const float v = std::abs(g[static_cast<std::size_t>(j) * gpu.pointsX() + i]);
+                if (i >= e.screenColumn + e.screenColumns) behind = std::max(behind, v);
+                else if (i < e.screenColumn) before = std::max(before, v);
+            }
+        std::printf("  écran plein (GPU float) : |u| max derrière %.1e, devant %.3f\n", static_cast<double>(behind), static_cast<double>(before));
+        check(behind == 0.0f && before > 1e-3f, "écran plein : du champ est passé de l'autre côté");
     }
     // e. longue durée : l'écart float / double croît-il ? (4 murs, aucune dissipation ; le GPU relit l'état tous les 1000 pas)
     {
