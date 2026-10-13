@@ -44,10 +44,10 @@ void groupVelocity2D(double kxdx, double kydx, double cfl, double& vx, double& v
 // pointe vers le point d'observation (phase stationnaire) ; sa phase est r f(phi) avec f(phi) = k(phi).r_chapeau, où le vecteur d'onde k vérifie la relation de
 // dispersion discrète à la pulsation donnée ET a sa vitesse de groupe dans la direction phi. Comme la grille est anisotrope, f dépend de phi (de 1 % au plus à 10 cases
 // par longueur d'onde), donc sur un chemin de 20 longueurs d'onde le déphasage entre deux directions voisines peut atteindre quelques % de longueur d'onde : mesuré,
-// c'est ce qui décale les franges de Young de 8 % en sin(theta) à 10 cases par longueur d'onde et R = 22 lambda. Table interpolée linéairement (361 directions de 0 à 90°).
+// c'est ce qui décale les franges de Young de 8 % en sin(theta) à 10 cases par longueur d'onde et R = 22 lambda. Table interpolée linéairement (361 directions de 0 à 90° par défaut).
 class RayPhase2D {
 public:
-    RayPhase2D(double omegaDt, double cfl, double dx);
+    RayPhase2D(double omegaDt, double cfl, double dx, int directions = 361);
     double axisWavenumber() const { return f_.front(); }   // k le long d'un axe [rad/m]
     double phase(double x, double y) const;                // k.r pour le déplacement (x >= 0, y quelconque) [rad]
 private:

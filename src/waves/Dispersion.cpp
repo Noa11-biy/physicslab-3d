@@ -69,13 +69,13 @@ double growthPerStep2D(double kxdx, double kydx, double cfl) {
 
 double cflLimit(int dimension) { return dimension == 1 ? 1.0 : 0.70710678118654752440; }
 
-RayPhase2D::RayPhase2D(double omegaDt, double cfl, double dx) {
-    constexpr int directions = 361;
+RayPhase2D::RayPhase2D(double omegaDt, double cfl, double dx, int directions) {
+    directions = std::max(directions, 2);
     constexpr double halfPi = 1.57079632679489661923;
     // |k| dx tel que w dt (kx dx, ky dx) = omegaDt dans la direction alpha du vecteur d'onde (w croît avec |k| tant que C S <= 1)
     auto wavevector = [&](double alpha, double& kxdx, double& kydx) {
         double lo = 0.0, hi = 3.1;
-        for (int it = 0; it < 60; ++it) {
+        for (int it = 0; it < 45; ++it) {
             const double m = 0.5 * (lo + hi), w = omegaDt2D(m * std::cos(alpha), m * std::sin(alpha), cfl);
             if (std::isnan(w) || w > omegaDt) hi = m; else lo = m;
         }
@@ -86,7 +86,7 @@ RayPhase2D::RayPhase2D(double omegaDt, double cfl, double dx) {
     for (int d = 0; d < directions; ++d) {
         const double phi = halfPi * d / (directions - 1);  // direction du rayon (de la vitesse de groupe)
         double lo = 0.0, hi = halfPi, kx = 0.0, ky = 0.0;
-        for (int it = 0; it < 60; ++it) {  // alpha -> direction de la vitesse de groupe : croissante de 0 à 90°
+        for (int it = 0; it < 45; ++it) {  // alpha -> direction de la vitesse de groupe : croissante de 0 à 90°
             const double m = 0.5 * (lo + hi);
             wavevector(m, kx, ky);
             double vx, vy;

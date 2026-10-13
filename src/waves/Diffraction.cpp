@@ -113,7 +113,7 @@ SlitScreen makeSlitScreen(const SlitScreenSpec& s) {
     const int first0 = static_cast<int>(std::lround(p.cellsY / 2.0 - 0.5 * (s.slits - 1) * P - 0.5 * (W - 1)));
     for (int m = 0; m < s.slits; ++m) {
         const int first = first0 + m * P;  // pas exact en nombre entier de cases
-        for (int j = first; j < first + W; ++j)
+        for (int j = std::max(first, 0); j < std::min(first + W, ny); ++j)  // un groupe de fentes trop grand est tronqué au domaine
             for (int c = 0; c < out.screenColumns; ++c) p.wall[static_cast<std::size_t>(j) * nx + out.screenColumn + c] = 0;
         centerSum += 0.5 * (2 * first + W - 1);
     }
