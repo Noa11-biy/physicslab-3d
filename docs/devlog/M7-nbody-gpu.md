@@ -1,6 +1,6 @@
 # M7 : N corps sur carte graphique (compute shader), et écart CPU / GPU
 
-Commits : `c8c4e3b` (étapes 1 et 2 : accélérations puis kick-drift-kick sur GPU, `--gpu-test`), `a7ee166` (étape 3 : module `--sim 11`, sphères de Plummer, passation). Date : 2026-10-09. Matériel de toutes les mesures : **Intel UHD Graphics** (carte intégrée), OpenGL 4.5.0, pilote 31.0.101.3962, 1024 threads par groupe au plus, 32 Kio de mémoire partagée par groupe.
+Commits : `6232cd6` (étapes 1 et 2 : accélérations puis kick-drift-kick sur GPU, `--gpu-test`), `19da22c` (étape 3 : module `--sim 11`, sphères de Plummer, passation). Date : 2026-10-09. Matériel de toutes les mesures : **Intel UHD Graphics** (carte intégrée), OpenGL 4.5.0, pilote 31.0.101.3962, 1024 threads par groupe au plus, 32 Kio de mémoire partagée par groupe.
 
 ## Objectif
 

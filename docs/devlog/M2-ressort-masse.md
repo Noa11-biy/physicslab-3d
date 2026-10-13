@@ -1,6 +1,6 @@
 # M2 : ressort-masse (libre, amorti, forcé) et application modulaire
 
-Commit : `4cc1c7b`. Date : 2026-10-08. `--sim 2`.
+Commit : `6900338`. Date : 2026-10-08. `--sim 2`.
 
 ## Objectif
 

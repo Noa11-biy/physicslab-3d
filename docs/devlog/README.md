@@ -8,18 +8,18 @@ Provenance des chiffres : ils viennent de l'exécution réelle, relevés module 
 
 | Module | Contenu | `--sim` | Commits | Fichier |
 |---|---|---|---|---|
-| M0 | socle : CMake, fenêtre OpenGL 4.5, ImGui docking, maths, interface `Solver`, 6 niveaux | - | `8ce9ea3` | [M0-socle.md](M0-socle.md) |
-| M1 | projectile avec frottement, cinq solveurs, solution exacte | 1 | `529f722`, `6cd12b9` | [M1-projectile-et-solveurs.md](M1-projectile-et-solveurs.md) |
-| M2 | ressort-masse libre, amorti, forcé ; application modulaire | 2 | `4cc1c7b` | [M2-ressort-masse.md](M2-ressort-masse.md) |
-| M3 | pendule simple (solution elliptique), pendule double (chaos) | 3, 4 | `62a34a5`, `b393ecd` | [M3-pendules.md](M3-pendules.md) |
-| M4 | gravitation : Kepler (précession numérique prédite), N corps (huit, Lagrange, amas) | 5, 6 | `7d26dd3`, `dc9a04b` | [M4-gravitation.md](M4-gravitation.md) |
-| M5 | frottement sec, chocs et rebonds, berceau de Newton | 7, 8, 9 | `07795c2`, `9171015`, `48a1c12` | [M5-collisions-et-frottements.md](M5-collisions-et-frottements.md) |
-| M6 | corps rigide : solides libres, toupie de Lagrange, intégrateurs d'orientation | 10 | `5935a4f` | [M6-corps-rigide.md](M6-corps-rigide.md) |
-| M7 | N corps sur GPU (compute shader), écart CPU / GPU | 11 | `c8c4e3b`, `a7ee166` | [M7-nbody-gpu.md](M7-nbody-gpu.md) |
+| M0 | socle : CMake, fenêtre OpenGL 4.5, ImGui docking, maths, interface `Solver`, 6 niveaux | - | `41d1f10` | [M0-socle.md](M0-socle.md) |
+| M1 | projectile avec frottement, cinq solveurs, solution exacte | 1 | `06ae7c0`, `a6142e9` | [M1-projectile-et-solveurs.md](M1-projectile-et-solveurs.md) |
+| M2 | ressort-masse libre, amorti, forcé ; application modulaire | 2 | `6900338` | [M2-ressort-masse.md](M2-ressort-masse.md) |
+| M3 | pendule simple (solution elliptique), pendule double (chaos) | 3, 4 | `ff19691`, `5846ef3` | [M3-pendules.md](M3-pendules.md) |
+| M4 | gravitation : Kepler (précession numérique prédite), N corps (huit, Lagrange, amas) | 5, 6 | `b36db81`, `9aa64a1` | [M4-gravitation.md](M4-gravitation.md) |
+| M5 | frottement sec, chocs et rebonds, berceau de Newton | 7, 8, 9 | `aa0fbb0`, `29b534b`, `50f374a` | [M5-collisions-et-frottements.md](M5-collisions-et-frottements.md) |
+| M6 | corps rigide : solides libres, toupie de Lagrange, intégrateurs d'orientation | 10 | `88ee1f2` | [M6-corps-rigide.md](M6-corps-rigide.md) |
+| M7 | N corps sur GPU (compute shader), écart CPU / GPU | 11 | `6232cd6`, `19da22c` | [M7-nbody-gpu.md](M7-nbody-gpu.md) |
 
 ## Chronologie
 
-- **2026-10-08** : initialisation, licence MIT, dépendances, M0 à M5c (dont le fichier de passation `efd75ef` après M3). Dix-sept commits de code et de documentation.
+- **2026-10-08** : initialisation, licence MIT, dépendances, M0 à M5c (dont le fichier de passation `29fd11f` après M3). Dix-sept commits de code et de documentation.
 - **2026-10-09** : M6 (corps rigide) puis M7 (N corps sur GPU), chacun suivi d'une mise à jour de la passation. Le devlog et la suite des livrables de fin de domaine viennent ensuite.
 
 Le dépôt compte 21 commits, 13 493 lignes d'en-têtes, de sources et de shaders (dont 11 modules d'interface), 3311 lignes de tests, 11 simulations, 6 niveaux pédagogiques, 5 solveurs à pas fixe ou adaptatif.

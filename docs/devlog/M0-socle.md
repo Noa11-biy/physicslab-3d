@@ -1,6 +1,6 @@
 # M0 : le socle
 
-Commits : `9c46f44` (initialisation), `9f6fa9b` (licence MIT), `16f667f` (dépendances), `8ce9ea3` (socle). Date : 2026-10-08.
+Commits : `5038554` (initialisation), `52dc048` (licence MIT), `4ea8b41` (dépendances), `41d1f10` (socle). Date : 2026-10-08.
 
 ## Objectif
 

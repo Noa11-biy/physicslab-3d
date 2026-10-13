@@ -1,6 +1,6 @@
 # M5 : collisions et frottements (M5a frottement sec, M5b chocs et rebonds, M5c berceau de Newton)
 
-Commits : `07795c2` (M5a), `9171015` (M5b), `e32c7ea` (passation et feuille de route de M5c), `48a1c12` (M5c), `dc7dbde` (passation de fin de M5c). Date : 2026-10-08. `--sim 7`, `--sim 8`, `--sim 9`.
+Commits : `aa0fbb0` (M5a), `29b534b` (M5b), `2d29afe` (passation et feuille de route de M5c), `50f374a` (M5c), `820a9cc` (passation de fin de M5c). Date : 2026-10-08. `--sim 7`, `--sim 8`, `--sim 9`.
 
 Fil conducteur : **la physique devient discontinue**, et les schémas d'ordre élevé s'effondrent s'ils ignorent la discontinuité. Trois façons de la traiter : détecter l'événement (M5a, M5b), le régulariser (M5a), ou ne pas en avoir parce que la force est continue (M5c, contact de Hertz).
 

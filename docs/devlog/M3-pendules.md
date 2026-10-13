@@ -1,6 +1,6 @@
 # M3 : pendule simple (solution elliptique exacte) puis pendule double (chaos)
 
-Commits : `62a34a5` (physique), `b393ecd` (interface). Date : 2026-10-08. `--sim 3` (simple) et `--sim 4` (double).
+Commits : `ff19691` (physique), `5846ef3` (interface). Date : 2026-10-08. `--sim 3` (simple) et `--sim 4` (double).
 
 ## Objectif
 
@@ -35,4 +35,4 @@ Sortir du linéaire. Le pendule simple a une solution exacte **non élémentaire
 
 ## Suite immédiate
 
-Le commit `efd75ef` (« fichier de passation et script de capture d'écran ») date de cette période : `docs/PASSATION.md` pour reprendre le projet dans une nouvelle conversation, et `tools/screenshot.ps1` pour vérifier l'interface sur captures.
+Le commit `29fd11f` (« fichier de passation et script de capture d'écran ») date de cette période : `docs/PASSATION.md` pour reprendre le projet dans une nouvelle conversation, et `tools/screenshot.ps1` pour vérifier l'interface sur captures.

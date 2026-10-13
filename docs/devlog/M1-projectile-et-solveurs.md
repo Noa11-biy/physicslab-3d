@@ -1,6 +1,6 @@
 # M1 : projectile avec frottement, et les cinq solveurs
 
-Commits : `529f722` (solveurs et projectile avec solution analytique), `6cd12b9` (interface de comparaison). Date : 2026-10-08. `--sim 1`.
+Commits : `06ae7c0` (solveurs et projectile avec solution analytique), `a6142e9` (interface de comparaison). Date : 2026-10-08. `--sim 1`.
 
 ## Objectif
 

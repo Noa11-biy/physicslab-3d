@@ -6,8 +6,9 @@ Dernière mise à jour : domaine **Ondes** en cours, branche `module/ondes` (O0 
 ## 1. Rôle et règles de travail
 
 **Rôle** : professeur de physique et mentor C++/GPU. On construit ensemble, module par module, un moteur de simulation de
-toute la physique, du collège au doctorat. L'utilisateur est **professeur** : le projet est aussi un outil pédagogique pour
-ses élèves, et il faut pouvoir l'expliquer à des non-initiés. Parler **français**, ton simple et direct.
+toute la physique, du collège au doctorat. Le public visé est **tout le monde**, en particulier les professeurs de physique de tous
+niveaux, qui s'en servent avec leurs élèves : il faut pouvoir l'expliquer à des non-initiés. L'utilisateur, lui, est **étudiant**
+(BUT informatique), pas professeur. Parler **français**, ton simple et direct.
 
 **Règles**
 - Pendant un module : réponses courtes, pas de longues explications, pas d'images ni de SVG dans le chat.
@@ -17,8 +18,12 @@ ses élèves, et il faut pouvoir l'expliquer à des non-initiés. Parler **fran�
   (3) discrétisation numérique, (4) implémentation CPU `double` puis GPU `float` si le cas est lourd, (5) validation (invariants,
   comparaison à l'analytique, écart CPU/GPU), (6) déclinaison pédagogique sur les 6 niveaux.
 - **Fin de domaine** (ex. : quand toute la Mécanique est finie), livrer : (1) un devlog complet, (2) un prompt court de reprise
-  prêt à copier, (3) le cours compilé en PDF ou Word pour expliquer à des « moldus » (l'utilisateur est prof et s'en sert avec
-  ses élèves), (4) la « roue des domaines » pour choisir le module suivant.
+  prêt à copier, (3) le cours compilé en PDF ou Word pour expliquer à des « moldus » (les professeurs qui s'en servent avec
+  leurs élèves), (4) la « roue des domaines » pour choisir le module suivant.
+- **Fin de MODULE, à ne pas oublier (demande de l'utilisateur, 2026-10-13)** : (1) `docs/PASSATION.md` à jour (état, mesures réelles, pièges, prochaine étape) ;
+  (2) commit puis `git push` sur la branche du domaine ; (3) vault Obsidian (`C:\Users\Undermania9741\Documents\Obsidian\Undermania9741`) : note `Projets/PhysicsLab 3D.md`
+  à jour et une ligne dans `Projets/PhysicsLab 3D/PhysicsLab 3D · Passations.md` (date, jalon, commit, état). **Fin de DOMAINE** : en plus, une copie complète de cette passation
+  dans `Projets/PhysicsLab 3D/Passations/` (nom : date, jalon, hash court), pour que le vault garde une trace même si le dépôt disparaît.
 - Ne jamais afficher une mesure sans l'avoir vérifiée : les chiffres du devlog doivent venir de l'exécution réelle.
 
 **Les 6 niveaux** (sélecteur global, `enum class Level`) : 1 Vulgarisation (images, analogies, zéro équation, 1-2 curseurs),
@@ -55,9 +60,11 @@ Moléculaire, Information quantique, Particules, Géophysique, Météo, Biophysi
 | O4 à O5 | Young et diffraction, acoustique (tuyau, Doppler) | à faire (section 6) |
 
 Dépôt : https://github.com/Noa11-biy/physicslab-3d (public, licence MIT). Branche de travail : `module/ondes` (la Mécanique est dans `main`, tag `mecanique-1` ;
-fin de domaine : merge `--no-ff` dans `main` puis tag annoté). Conventions de commit : `feat(mecanique): ...`, `fix:`, `docs:`,
-`build:`, `test:` en français, avec le trailer `Co-Authored-By` demandé par l'environnement. Pousser sur la branche après chaque
-module quand l'utilisateur le demande ou continue la chaîne (c'était son souhait jusqu'ici).
+fin de domaine : merge `--no-ff` dans `main` puis tag annoté). Conventions de commit : préfixes `feat(ondes): ...`, `fix:`, `docs:`,
+`build:`, `test:`. **Depuis le 2026-10-12 : messages en anglais, jamais de ligne `Co-Authored-By` ni de mention « Generated with Claude Code »**
+(consigne de l'utilisateur ; les anciens commits en français restent tels quels). **L'historique a été réécrit le 2026-10-12** (suppression des trailers) : tous les
+hashes ont changé ; ceux cités dans `docs/devlog/` et ici ont été remis à jour le 2026-10-13. Pousser sur la branche après chaque
+module (c'est le souhait de l'utilisateur).
 
 ### Résultats mesurés (réels, à réutiliser dans le cours et le devlog)
 
@@ -406,7 +413,7 @@ Briques O0 et O1 prêtes à réutiliser : `waves::Wave1D/2D` (leapfrog, bords, �
 2. **Cours compilé : FAIT** dans `docs/cours/` (`La-mecanique-par-la-simulation.docx` et `.pdf`, 75 pages, environ 27 000 mots) : 7 chapitres, chacun en **six niveaux** (N1 à N6) + « Dans le logiciel » (captures réelles) + exercices rangés par niveau (**64 exercices corrigés**, annexe A) + « À retenir » ; avant-propos, table des matières (champ Word avec numéros de page), conclusion en dix idées, glossaire, formulaire, annexe logiciel, références ; vraies équations Word (OMML) ; figures tracées avec les solveurs du projet. Le générateur est dans `tools/cours/` (voir son README : les pièges de la conversion LibreOffice y sont notés).
 3. **Roue des domaines : FAIT** dans `docs/roue-des-domaines.html` (page autonome, sans serveur ; thème clair/sombre, lisible sur téléphone). Neuf secteurs dans l'ordre prévu ; pour chacun : pourquoi à cette place, ce qui est déjà prêt dans le code, briques à construire, premières simulations avec cas de référence, difficulté et nombre de modules **estimés**, dépendances, prompt de reprise à copier. Proposition : **Ondes** en premier. Quatre « raccourcis » hors ordre (dynamique moléculaire de Lennard-Jones, attracteur de Lorenz, circuit RLC, précession relativiste de Mercure). Les valeurs de référence citées viennent de la littérature (certaines de mémoire) et ne sont pas des mesures du logiciel : les revérifier au moment du module. Pour modifier la roue : le tableau `D` (domaines) et `SHORT` (raccourcis) au début du script de la page.
 4. **Prompt de reprise court : FAIT** (section 8 : il fonctionne tel quel et la roue en donne une version par domaine).
-5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1` : FAIT** le 2026-10-09 sur accord de l'utilisateur (merge `--no-ff` `de5dd9f`, tag annoté, `main` et le tag poussés sur GitHub).
+5. **Merge de `module/mecanique` dans `main`, puis tag `mecanique-1` : FAIT** le 2026-10-09 sur accord de l'utilisateur (merge `--no-ff` `701d21d`, tag annoté, `main` et le tag poussés sur GitHub).
 
 **À prévoir plus tard (demande de l'utilisateur, seulement notée, pas écrite) :** une **notice d'utilisation du logiciel** : comment il marche (les six niveaux, la navigation 3D, les panneaux, les curseurs, les options `--level` / `--sim`), pensée pour des élèves et des non-initiés. À faire quand le logiciel aura plusieurs domaines ; à placer dans `docs/` (par exemple `docs/notice/`), à distinguer du cours qui explique la physique.
 
@@ -445,6 +452,6 @@ Briques O0 et O1 prêtes à réutiliser : `waves::Wave1D/2D` (leapfrog, bords, �
 
 > Reprends le projet PhysicsLab 3D dans ce dossier. Lis d'abord `docs/PASSATION.md` en entier (rôle, règles, état, architecture, pièges), puis `README.md`. Vérifie que ça compile et que les tests passent (section 5, y compris `--gpu-test`).
 > La Mécanique est terminée et fusionnée dans `main` (tag `mecanique-1`) ; son devlog (`docs/devlog/`), son cours (`docs/cours/`) et la roue des domaines (`docs/roue-des-domaines.html`) sont faits. Le domaine « Ondes » est en cours sur la branche `module/ondes` : la feuille de route validée et l'état (O0 à O3 faits, O4 et O5 à faire) sont à la section 6 ; vérifie avec `git branch --show-current` et `git log --oneline`.
-> Continue avec le prochain module non fait (tests avant l'interface, valeurs réelles affichées, pousser après chaque module). Réponses courtes, en français.
+> Continue avec le prochain module non fait (tests avant l'interface, valeurs réelles affichées). En fin de module, ne pas oublier : passation à jour, push sur GitHub, note du vault Obsidian (`Projets/PhysicsLab 3D.md`) et ligne dans l'index des passations (section 1). Commits en anglais, sans `Co-Authored-By`. Réponses courtes, en français.
 >
 > Pour commencer un autre domaine, remplace « Ondes » par son nom et demande d'abord la feuille de route courte : la roue des domaines donne le prompt prêt à copier pour chacun.

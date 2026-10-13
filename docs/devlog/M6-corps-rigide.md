@@ -1,6 +1,6 @@
 # M6 : corps rigide (solides libres, toupie de Lagrange, intégrateurs d'orientation)
 
-Commit : `5935a4f` (suivi de `e0380f7` pour la passation). Date : 2026-10-09. `--sim 10`.
+Commit : `88ee1f2` (suivi de `e5a2ca4` pour la passation). Date : 2026-10-09. `--sim 10`.
 
 ## Objectif
 

@@ -1,6 +1,6 @@
 # M4 : gravitation (M4a : Kepler à deux corps, M4b : problème à N corps)
 
-Commits : `7d26dd3` (M4a), `dc9a04b` (M4b et passation M4). Date : 2026-10-08. `--sim 5` (Kepler) et `--sim 6` (N corps).
+Commits : `b36db81` (M4a), `9aa64a1` (M4b et passation M4). Date : 2026-10-08. `--sim 5` (Kepler) et `--sim 6` (N corps).
 
 ## M4a : orbite de Kepler
 
