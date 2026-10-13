@@ -33,8 +33,8 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure   # tests de validation
 ./build/physicslab                           # lance l'application
-./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 15 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7, O0, O1, O2, O3)
-./build/physicslab --gpu-test               # M7 et O3 : compare les calculs du GPU (compute shaders : N corps, équation d'onde 2D) au CPU double, mesure les temps
+./build/physicslab --level 5 --sim 4        # niveau pédagogique 5 (1 à 6), simulation 4 (1 à 16 : M1, M2, M3, M3b, M4a, M4b, M5a, M5b, M5c, M6, M7, O0, O1, O2, O3, O4)
+./build/physicslab --gpu-test               # M7, O3 et O4 : compare les calculs du GPU (compute shaders : N corps, équation d'onde 2D, écran à fentes) au CPU double, mesure les temps
 ```
 
 Si le dépôt a été cloné sans `--recurse-submodules` : `git submodule update --init --recursive`.
@@ -74,7 +74,7 @@ Ordre de progression (cocher au fil des modules) :
   - [x] O1 : corde vibrante (chaîne de masses intégrée par les solveurs de la Mécanique, modes propres f_n = n c / 2L, harmoniques absents, dispersion, spectre FFT ; `--sim 13`)
   - [x] O2 : dispersion numérique et condition CFL (vitesses de phase et de groupe de la grille, anisotropie 2D, convergence, instabilité mesurée ; `--sim 14`)
   - [x] O3 : cuve à ondes 2D, CPU `double` et GPU `float` (milieu à vitesse variable, source ponctuelle, réflexion et réfraction de Snell-Descartes, réflexion totale ; `--sim 15`, `--gpu-test`)
-  - [ ] O4 : interférences de Young et diffraction
+  - [x] O4 : fentes de Young et diffraction (écran à fentes, source en ligne, 1 à 5 fentes, théorie de Fraunhofer, intégrale de Rayleigh-Sommerfeld avec la phase de la grille ; `--sim 16`, `--gpu-test`)
   - [ ] O5 : acoustique (tuyau d'orgue, effet Doppler)
 - [ ] Thermodynamique
 - [ ] Électrodynamique
