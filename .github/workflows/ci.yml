@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code et les sous-modules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Installer les dépendances système
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build cmake g++ pkg-config libgl1-mesa-dev xorg-dev
+
+      - name: Configurer
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_WAYLAND=OFF
+
+      - name: Compiler
+        run: cmake --build build
+
+      - name: Tests de validation
+        run: ctest --test-dir build --output-on-failure
+
+  # Le nom de ce job contient « secret » : c'est ce que l'Agentic OS cherche pour juger qu'un contrôle de secrets existe.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer tout l'historique
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Le binaire gitleaks (licence MIT) plutôt que gitleaks-action (licence commerciale).
+      - name: Installer gitleaks (version épinglée, somme de contrôle vérifiée)
+        run: curl -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz && echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tgz" | sha256sum -c - && tar -xzf gitleaks.tgz gitleaks
+
+      # shortcut: tout l'historique à chaque fois (simple et plus strict) ; passer à la plage de commits si le dépôt devient gros.
+      - name: Chercher des secrets dans tout l'historique
+        run: ./gitleaks git --redact --verbose --no-banner --log-opts="--all"
